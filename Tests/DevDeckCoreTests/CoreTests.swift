@@ -328,3 +328,26 @@ struct LocalizationTests {
         #expect(L10n.translate("texto que no existe", language: .en) == "texto que no existe")
     }
 }
+
+@Suite("Updates")
+struct UpdateTests {
+    @Test func comparesVersionsNumerically() {
+        #expect(Updates.isNewer("0.1.1", than: "0.1.0"))
+        #expect(Updates.isNewer("v0.10.0", than: "0.9.9"))
+        #expect(Updates.isNewer("1.0", than: "0.9.9"))
+        #expect(!Updates.isNewer("0.1.0", than: "0.1.0"))
+        #expect(!Updates.isNewer("0.1", than: "0.1.0"))
+        #expect(!Updates.isNewer("0.0.9", than: "0.1.0"))
+    }
+
+    @Test func parsesLatestRelease() {
+        let json = #"{"tag_name":"v0.2.0","draft":false,"prerelease":false,"html_url":"https://github.com/o/r/releases/tag/v0.2.0","body":"- one\n- two","published_at":"2026-11-13T15:17:34Z","assets":[{"name":"other.txt","browser_download_url":"https://x/other.txt"},{"name":"DevDeck.zip","browser_download_url":"https://x/DevDeck.zip"}]}"#
+        let release = Updates.parse(Data(json.utf8))
+        #expect(release?.version == "0.2.0")
+        #expect(release?.downloadURL == "https://x/DevDeck.zip")
+        #expect(release?.notes.contains("two") == true)
+        #expect(release?.publishedAt != nil)
+        #expect(Updates.parse(Data(#"{"tag_name":"v9","prerelease":true}"#.utf8)) == nil)
+        #expect(Updates.parse(Data("{}".utf8)) == nil)
+    }
+}

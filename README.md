@@ -106,6 +106,8 @@ Download `DevDeck.zip` from the [latest release](https://github.com/SeanLuis/dev
 
 Requires macOS 14 or later.
 
+DevDeck checks for new versions once a day and shows you the release notes. It never installs anything by itself: updating is one click, and the download is verified to be signed and notarized before it replaces the app.
+
 ## Build from source
 
 ```bash
@@ -165,7 +167,6 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Releas
 
 ## Roadmap
 
-- Automatic updates
 - Token readers for more agents (Cursor, Aider, Amp)
 - Per-project token budgets and alerts
 - More languages

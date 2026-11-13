@@ -28,6 +28,9 @@ done
 iconutil -c icns build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 
 VERSION=$(git describe --tags --always 2>/dev/null || echo 0.1.0)
+# Version shown in the app: APP_VERSION, or the latest git tag, so a local build does not look older than the release.
+: "${APP_VERSION:=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+: "${APP_VERSION:=0.1.0}"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

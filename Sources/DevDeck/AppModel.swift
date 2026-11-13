@@ -135,6 +135,13 @@ final class AppModel {
     var copilotDismissedAt: Int?
     /// The launcher should open straight on the conversation (set by the island).
     var paletteWantsChat = false
+    // Updates
+    var availableUpdate: AppRelease?
+    var showUpdate = false
+    var updateChecking = false
+    var updateInstalling = false
+    var updateError: String?
+    var lastUpdateCheck: Date?
     /// Changes whenever something asks the launcher (floating or embedded) to show the conversation.
     var chatToken = UUID()
     @ObservationIgnored var chatRequested = Date.distantPast
@@ -227,6 +234,15 @@ final class AppModel {
             }
         })
         if !headless { refreshNotificationStatus() }
+        if !headless {
+            tasks.append(Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                while !Task.isCancelled {
+                    if let self, self.settings.checkForUpdates { await self.checkForUpdates() }
+                    try? await Task.sleep(nanoseconds: 24 * 3600 * 1_000_000_000)
+                }
+            })
+        }
         tasks.append(Task { [weak self] in
             await self?.discoverProjects()
             await self?.scanCaches(onlyIfStale: true)

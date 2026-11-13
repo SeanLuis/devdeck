@@ -56,6 +56,9 @@ enum SnapshotRunner {
                 done,
             ]
             await render(AgentConversationView().environment(model).background(Theme.background).appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 780, height: 980), to: "\(outDir)/conversation.png")
+            let sample = AppRelease(version: "0.2.0", notes: "## What's new\n\n- Token budgets per project, with alerts\n- Readers for **Cursor** and Aider\n- The island remembers the last board you used\n\n## Fixes\n\n- Lower CPU use while the window is open",
+                                    pageURL: "https://github.com/\(Updates.repository)/releases", downloadURL: nil, publishedAt: Date().addingTimeInterval(-7200))
+            await render(UpdateSheet(release: sample).environment(model).appLanguage(model.settings.language), size: CGSize(width: 560, height: 470), to: "\(outDir)/update.png")
             // The island in each of its states. `--notch` draws it as it hangs from a MacBook notch.
             if CommandLine.arguments.contains("--notch") { model.notchWidth = 190; model.notchHeight = 32 }
             let islandSize = CGSize(width: IslandController.size.width, height: IslandController.size.height)

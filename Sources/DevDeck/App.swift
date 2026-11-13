@@ -26,6 +26,10 @@ enum Entry {
             MainActor.assumeIsolated { CLI.agentSmoke(question) }
             return
         }
+        if args.contains("--update-check") {
+            CLI.updateCheck(installInto: args.firstIndex(of: "--install-into").flatMap { args.count > $0 + 1 ? args[$0 + 1] : nil })
+            return
+        }
         if args.contains("--usage-dump") {
             CLI.usageDump()
             return
@@ -199,6 +203,27 @@ enum CLI {
             exit(0)
         }
         app.run()
+    }
+
+    /// Asks GitHub for the latest release. With `--install-into <copy of DevDeck.app>` it also runs the real
+    /// download → verify → replace on that copy, to test the updater without touching the installed app.
+    static func updateCheck(installInto path: String?) {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                guard let latest = try await Updates.fetchLatest() else { print("no release found"); done.signal(); return }
+                print("latest:", latest.version, "· download:", latest.downloadURL ?? "-", "· notes:", latest.notes.count, "chars")
+                if let path {
+                    let before = await Updates.teamIdentifier(ofApp: path)
+                    try await Updates.install(latest, replacing: path)
+                    let after = await Updates.teamIdentifier(ofApp: path)
+                    let version = NSDictionary(contentsOfFile: path + "/Contents/Info.plist")?["CFBundleShortVersionString"] as? String
+                    print("installed into \(path): version \(version ?? "?") · team before \(before ?? "ad-hoc") → after \(after ?? "?")")
+                }
+            } catch { print("ERROR:", error.localizedDescription) }
+            done.signal()
+        }
+        done.wait()
     }
 
     static func usageDump() {

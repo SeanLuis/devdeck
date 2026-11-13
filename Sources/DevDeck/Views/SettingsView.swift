@@ -166,6 +166,26 @@ struct SettingsView: View {
                     }
                 }
 
+                Panel(L("Actualizaciones"), symbol: "arrow.down.circle") {
+                    row(L("Versión %@", model.appVersion), updateStatus) {
+                        HStack(spacing: 8) {
+                            if let update = model.availableUpdate {
+                                Button(L("Ver la %@", update.version)) { model.showUpdate = true }.buttonStyle(.borderedProminent)
+                            }
+                            Button {
+                                Task { await model.checkForUpdates(manual: true) }
+                            } label: {
+                                if model.updateChecking { ProgressView().controlSize(.small) } else { Text(L("Buscar ahora")) }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(model.updateChecking)
+                        }
+                    }
+                    row(L("Buscar actualizaciones cada día"), L("Solo avisa. Nunca se instala nada sin que lo aceptes")) {
+                        Toggle("", isOn: $model.settings.checkForUpdates).labelsHidden().toggleStyle(.switch)
+                    }
+                }
+
                 Panel(L("Monitoreo"), symbol: "waveform.path.ecg") {
                     row(L("Frecuencia de muestreo"), L("Más rápido = gráficos más finos, un poco más de CPU")) {
                         Picker("", selection: $model.settings.sampleInterval) {
@@ -282,6 +302,13 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var updateStatus: String {
+        if let error = model.updateError { return error }
+        if let update = model.availableUpdate { return L("Hay una versión nueva: %@", update.version) }
+        if let date = model.lastUpdateCheck { return L("Al día · comprobado %@", relative(date)) }
+        return L("Aún no se ha comprobado")
     }
 
     private var modelOptions: [String] {

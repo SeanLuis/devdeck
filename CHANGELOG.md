@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- DevDeck checks for new versions once a day and tells you, with the release notes. Updating is one click: the download is verified to be signed and notarized before it replaces the app. You can skip a version or turn the check off
+- Settings → Updates, with "Check now"
+
 ## 0.1.1
 
 - The app is now signed with a Developer ID and notarized by Apple, and runs on Apple silicon and Intel

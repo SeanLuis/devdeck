@@ -91,6 +91,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var islandMode = "always"
     /// App and agent icons: "color" | "mono" (desaturated) | "symbols" (no logos).
     public var iconStyle = "color"
+    /// Look for new versions once a day (it only tells you; installing is always your click).
+    public var checkForUpdates = true
+    /// A version the user chose not to be told about again.
+    public var skippedVersion: String?
     /// Board the island opens on: "system" | "agents" | "accounts" | "copilot".
     public var deckTab = "system"
     /// Global launcher shortcut (Carbon key code + modifiers) and its printable label.
@@ -115,6 +119,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         islandMode = try c.decodeIfPresent(String.self, forKey: .islandMode) ?? (islandEnabled ? "always" : "off")
         deckTab = try c.decodeIfPresent(String.self, forKey: .deckTab) ?? d.deckTab
         iconStyle = try c.decodeIfPresent(String.self, forKey: .iconStyle) ?? d.iconStyle
+        checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? d.checkForUpdates
+        skippedVersion = try c.decodeIfPresent(String.self, forKey: .skippedVersion)
         hotKeyCode = try c.decodeIfPresent(Int.self, forKey: .hotKeyCode) ?? d.hotKeyCode
         hotKeyModifiers = try c.decodeIfPresent(Int.self, forKey: .hotKeyModifiers) ?? d.hotKeyModifiers
         hotKeyLabel = try c.decodeIfPresent(String.self, forKey: .hotKeyLabel) ?? d.hotKeyLabel

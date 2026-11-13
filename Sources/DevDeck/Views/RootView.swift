@@ -19,6 +19,9 @@ struct RootView: View {
         }
         .foregroundStyle(.primary)
         .animation(.snappy, value: model.toast)
+        .sheet(isPresented: Binding(get: { model.showUpdate && model.availableUpdate != nil }, set: { model.showUpdate = $0 })) {
+            if let update = model.availableUpdate { UpdateSheet(release: update).environment(model) }
+        }
     }
 
     @ViewBuilder
@@ -86,6 +89,7 @@ struct Sidebar: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 10)
+            UpdateCard().padding(.horizontal, 10).padding(.bottom, 8)
             SidebarFooter()
                 .padding(10)
         }
