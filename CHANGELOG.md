@@ -5,6 +5,7 @@
 - Settings reorganized into sections (General, AI, Island and launcher, Game mode, Notifications, Monitoring, Projects, Updates, Data), one at a time
 - History: a summary per minute kept for seven days, with memory and swap over time, who was using memory at any minute, and the moments memory reached its limit
 - Leak detection: processes whose memory only grows are flagged, with a recommendation to restart them
+- History keeps one point per minute after a relaunch and reads the right days when the clocks change; leak detection waits for two hours and 600 MB of steady growth before flagging anything
 
 ## 0.1.3
 

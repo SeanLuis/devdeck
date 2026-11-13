@@ -72,20 +72,27 @@ public final class TimelineStore: @unchecked Sendable {
     /// Points between two dates, oldest first.
     public func load(from start: Date, to end: Date = Date()) -> [TimelinePoint] {
         lock.lock(); defer { lock.unlock() }
-        var out: [TimelinePoint] = []
+        // One point per minute: a relaunch inside the same minute writes that minute twice.
+        var byMinute: [Int: TimelinePoint] = [:]
         let first = Int(start.timeIntervalSince1970 / 60), last = Int(end.timeIntervalSince1970 / 60)
-        var day = start
         let decoder = JSONDecoder()
-        while AgentUsageReport.dayString(day) <= AgentUsageReport.dayString(end) {
-            if let data = try? Data(contentsOf: file(AgentUsageReport.dayString(day))) {
+        // Walk calendar days, not 24-hour steps: the days the clocks change are 23 or 25 hours long.
+        let calendar = Calendar.current
+        var day = calendar.startOfDay(for: start)
+        let lastDay = AgentUsageReport.dayString(end)
+        var seen = Set<String>()
+        while AgentUsageReport.dayString(day) <= lastDay {
+            let name = AgentUsageReport.dayString(day)
+            if seen.insert(name).inserted, let data = try? Data(contentsOf: file(name)) {
                 for line in data.split(separator: 0x0A) {
                     guard let point = try? decoder.decode(TimelinePoint.self, from: Data(line)), point.minute >= first, point.minute <= last else { continue }
-                    out.append(point)
+                    byMinute[point.minute] = point
                 }
             }
-            day = day.addingTimeInterval(86_400)
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
         }
-        return out.sorted { $0.minute < $1.minute }
+        return byMinute.values.sorted { $0.minute < $1.minute }
     }
 
     private func prune(now: Date) {
@@ -127,7 +134,7 @@ public struct TimelineMoment: Hashable, Sendable, Identifiable {
 
 public enum TimelineAnalysis {
     /// Sources whose memory rose steadily over the window (at least `minHours`), by at least `minGrowthMB`.
-    public static func leaks(_ points: [TimelinePoint], minHours: Double = 1, minGrowthMB: Int = 400) -> [MemoryLeak] {
+    public static func leaks(_ points: [TimelinePoint], minHours: Double = 2, minGrowthMB: Int = 600) -> [MemoryLeak] {
         var series: [String: [(minute: Int, mb: Int, name: String, kind: String)]] = [:]
         for point in points { for source in point.sources { series[source.id, default: []].append((point.minute, source.memMB, source.name, source.kind)) } }
         var found: [MemoryLeak] = []
