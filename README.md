@@ -102,12 +102,7 @@ When DevDeck sees a dev server it remembers its command, folder and environment.
 
 ## Install
 
-1. Download `DevDeck.zip` from the [latest release](https://github.com/SeanLuis/devdeck/releases/latest) and move `DevDeck.app` to Applications.
-2. The app is not notarized yet, so the first time macOS will refuse to open it. Either right-click the app and choose **Open**, or run:
-
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/DevDeck.app
-   ```
+Download `DevDeck.zip` from the [latest release](https://github.com/SeanLuis/devdeck/releases/latest), unzip it and move `DevDeck.app` to Applications. The app is signed and notarized by Apple, and runs on Apple silicon and Intel.
 
 Requires macOS 14 or later.
 
