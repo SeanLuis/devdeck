@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3
 
 - Memory and swap: "Free swap" lets you pick what to close, restart or reopen to get swap back, with an estimate for each
 - The swap analysis is now the copilot itself, inline: its plan, its answer and every proposal as a card to approve
