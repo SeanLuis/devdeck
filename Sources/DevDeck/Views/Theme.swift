@@ -273,6 +273,8 @@ extension View {
     @ViewBuilder
     func floatingGlass(cornerRadius: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        // The glass API only exists in the macOS 26 SDK (Xcode 26); older toolchains build the material version.
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             self.background(Theme.surface.opacity(0.55), in: shape)
                 .glassEffect(.regular, in: shape)
@@ -280,6 +282,10 @@ extension View {
             self.background(.ultraThinMaterial, in: shape)
                 .overlay(shape.strokeBorder(Theme.glassStroke, lineWidth: 1))
         }
+        #else
+        self.background(.ultraThinMaterial, in: shape)
+            .overlay(shape.strokeBorder(Theme.glassStroke, lineWidth: 1))
+        #endif
     }
 
     /// Light / dark / follow the system, from Settings.
