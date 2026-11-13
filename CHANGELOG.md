@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.4
 
+- Settings reorganized into sections (General, AI, Island and launcher, Game mode, Notifications, Monitoring, Projects, Updates, Data), one at a time
 - History: a summary per minute kept for seven days, with memory and swap over time, who was using memory at any minute, and the moments memory reached its limit
 - Leak detection: processes whose memory only grows are flagged, with a recommendation to restart them
 

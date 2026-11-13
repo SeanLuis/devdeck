@@ -9,13 +9,72 @@ struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
     @State private var showAdvanced = false
+    @State private var pane = SettingsPane(rawValue: UserDefaults.standard.string(forKey: "settingsPane") ?? "") ?? .general
 
     var body: some View {
         @Bindable var model = model
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                HeroHeader(section: .settings, title: L("Ajustes"), subtitle: L("IA, notificaciones, monitoreo y proyectos"))
+        HStack(alignment: .top, spacing: 0) {
+            // Categories on the left, one at a time on the right.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Ajustes")).font(.system(size: 22, weight: .semibold)).padding(.horizontal, 10).padding(.bottom, 12)
+                ForEach(SettingsPane.allCases) { item in
+                    Button { pane = item } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: item.symbol).font(.system(size: 12, weight: .medium)).frame(width: 18)
+                                .foregroundStyle(item == pane ? Color.primary : Theme.secondaryText)
+                            Text(item.title).font(.system(size: 13, weight: item == pane ? .medium : .regular))
+                            Spacer(minLength: 0)
+                            if item == .updates, model.pendingUpdate != nil { Circle().fill(Theme.link).frame(width: 6, height: 6) }
+                            if item == .game, model.gameMode { Circle().fill(Theme.success).frame(width: 6, height: 6) }
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Theme.ink(item == pane ? 0.09 : 0), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 28)
+            .padding(.horizontal, 12)
+            .frame(width: 210)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .overlay(alignment: .trailing) { Rectangle().fill(Theme.ink(0.07)).frame(width: 1) }
 
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pane.title).font(.system(size: 18, weight: .semibold))
+                    Text(pane.summary).font(.system(size: 13)).foregroundStyle(Theme.secondaryText)
+                }
+                switch pane {
+                case .general:
+                Panel(L("Apariencia"), symbol: "paintbrush") {
+                    row(L("Idioma"), L("De la aplicación y de las respuestas del copiloto")) {
+                        Picker("", selection: $model.settings.language) {
+                            ForEach(AppLanguage.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
+                    }
+                    row(L("Tema"), L("Claro, oscuro o el del sistema")) {
+                        Picker("", selection: $model.settings.appearance) {
+                            Text(L("Sistema")).tag("system")
+                            Text(L("Claro")).tag("light")
+                            Text(L("Oscuro")).tag("dark")
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
+                    }
+                    row(L("Iconos de apps y agentes"), L("Usa el icono real de cada aplicación instalada, en color o en gris, o solo símbolos")) {
+                        Picker("", selection: $model.settings.iconStyle) {
+                            Text(L("Color")).tag("color")
+                            Text(L("Gris")).tag("mono")
+                            Text(L("Símbolos")).tag("symbols")
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
+                    }
+                }
+                case .ai:
                 Panel(L("Inteligencia artificial"), symbol: "sparkles") {
                     VStack(spacing: 8) {
                         ForEach(AIProvider.allCases, id: \.self) { provider in
@@ -105,7 +164,31 @@ struct SettingsView: View {
                     }
                     .font(.callout)
                 }
-
+                case .island:
+                Panel(L("Isla y lanzador"), symbol: "rectangle.topthird.inset.filled") {
+                    row(L("Atajo del lanzador"), L("Abre el copiloto desde cualquier app. Haz clic y pulsa la combinación nueva")) {
+                        HotKeyRecorder()
+                    }
+                    row(L("Isla en vivo"), L("Píldora arriba al centro. Al hacer clic abre tableros de sistema, agentes, cuentas y copiloto")) {
+                        Picker("", selection: $model.settings.islandMode) {
+                            Text(L("Siempre")).tag("always")
+                            Text(L("Solo si pasa algo")).tag("auto")
+                            Text(L("Apagada")).tag("off")
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 320)
+                        .onChange(of: model.settings.islandMode) { IslandController.shared.update(model: model) }
+                    }
+                    row(L("Tablero inicial de la isla"), L("El que se abre primero; se puede cambiar desde la propia isla")) {
+                        Picker("", selection: $model.settings.deckTab) {
+                            ForEach(DeckTab.allCases) { Text($0.title).tag($0.rawValue) }
+                        }
+                        .labelsHidden().frame(width: 240)
+                        .onChange(of: model.settings.deckTab) { model.deckTab = model.settings.deckTab }
+                    }
+                }
+                case .game:
+                GameSettingsPanel()
+                case .notifications:
                 Panel(L("Notificaciones"), symbol: "bell.badge") {
                     row("macOS", model.notificationsAllowed
                         ? L("Las alertas llegan como notificaciones del sistema.")
@@ -129,73 +212,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-
-                Panel(L("Apariencia y acceso rápido"), symbol: "paintbrush") {
-                    row(L("Idioma"), L("De la aplicación y de las respuestas del copiloto")) {
-                        Picker("", selection: $model.settings.language) {
-                            ForEach(AppLanguage.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
-                    }
-                    row(L("Tema"), L("Claro, oscuro o el del sistema")) {
-                        Picker("", selection: $model.settings.appearance) {
-                            Text(L("Sistema")).tag("system")
-                            Text(L("Claro")).tag("light")
-                            Text(L("Oscuro")).tag("dark")
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
-                    }
-                    row(L("Iconos de apps y agentes"), L("Usa el icono real de cada aplicación instalada, en color o en gris, o solo símbolos")) {
-                        Picker("", selection: $model.settings.iconStyle) {
-                            Text(L("Color")).tag("color")
-                            Text(L("Gris")).tag("mono")
-                            Text(L("Símbolos")).tag("symbols")
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
-                    }
-                    row(L("Atajo del lanzador"), L("Abre el copiloto desde cualquier app. Haz clic y pulsa la combinación nueva")) {
-                        HotKeyRecorder()
-                    }
-                    row(L("Isla en vivo"), L("Píldora arriba al centro. Al hacer clic abre tableros de sistema, agentes, cuentas y copiloto")) {
-                        Picker("", selection: $model.settings.islandMode) {
-                            Text(L("Siempre")).tag("always")
-                            Text(L("Solo si pasa algo")).tag("auto")
-                            Text(L("Apagada")).tag("off")
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 320)
-                        .onChange(of: model.settings.islandMode) { IslandController.shared.update(model: model) }
-                    }
-                    row(L("Tablero inicial de la isla"), L("El que se abre primero; se puede cambiar desde la propia isla")) {
-                        Picker("", selection: $model.settings.deckTab) {
-                            ForEach(DeckTab.allCases) { Text($0.title).tag($0.rawValue) }
-                        }
-                        .labelsHidden().frame(width: 240)
-                        .onChange(of: model.settings.deckTab) { model.deckTab = model.settings.deckTab }
-                    }
-                }
-
-                GameSettingsPanel()
-
-                Panel(L("Actualizaciones"), symbol: "arrow.down.circle") {
-                    row(L("Versión %@", model.appVersion), updateStatus) {
-                        HStack(spacing: 8) {
-                            if let update = model.availableUpdate {
-                                Button(L("Ver la %@", update.version)) { model.showUpdate = true }.buttonStyle(.borderedProminent)
-                            }
-                            Button {
-                                Task { await model.checkForUpdates(manual: true) }
-                            } label: {
-                                if model.updateChecking { ProgressView().controlSize(.small) } else { Text(L("Buscar ahora")) }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(model.updateChecking)
-                        }
-                    }
-                    row(L("Buscar actualizaciones cada día"), L("Solo avisa. Nunca se instala nada sin que lo aceptes")) {
-                        Toggle("", isOn: $model.settings.checkForUpdates).labelsHidden().toggleStyle(.switch)
-                    }
-                }
-
+                case .monitoring:
                 Panel(L("Monitoreo"), symbol: "waveform.path.ecg") {
                     row(L("Frecuencia de muestreo"), L("Más rápido = gráficos más finos, un poco más de CPU")) {
                         Picker("", selection: $model.settings.sampleInterval) {
@@ -224,7 +241,7 @@ struct SettingsView: View {
                     }
                     if let loginError { Text(loginError).font(.caption).foregroundStyle(Theme.danger) }
                 }
-
+                case .projects:
                 Panel(L("Dónde buscar proyectos"), symbol: "folder") {
                     ForEach(model.settings.projectRoots, id: \.self) { root in
                         HStack {
@@ -242,7 +259,27 @@ struct SettingsView: View {
                         Text(L("%@ proyectos", "\(model.discoveredProjects.count)")).foregroundStyle(Theme.secondaryText)
                     }
                 }
-
+                case .updates:
+                Panel(L("Actualizaciones"), symbol: "arrow.down.circle") {
+                    row(L("Versión %@", model.appVersion), updateStatus) {
+                        HStack(spacing: 8) {
+                            if let update = model.availableUpdate {
+                                Button(L("Ver la %@", update.version)) { model.showUpdate = true }.buttonStyle(.borderedProminent)
+                            }
+                            Button {
+                                Task { await model.checkForUpdates(manual: true) }
+                            } label: {
+                                if model.updateChecking { ProgressView().controlSize(.small) } else { Text(L("Buscar ahora")) }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(model.updateChecking)
+                        }
+                    }
+                    row(L("Buscar actualizaciones cada día"), L("Solo avisa. Nunca se instala nada sin que lo aceptes")) {
+                        Toggle("", isOn: $model.settings.checkForUpdates).labelsHidden().toggleStyle(.switch)
+                    }
+                }
+                case .about:
                 Panel(L("Huella de DevDeck")) {
                     let me = model.snapshot.group(Classifier.selfGroupID)
                     HStack(spacing: 0) {
@@ -271,8 +308,12 @@ struct SettingsView: View {
                     Text(L("La API key y los comandos recordados (con su entorno) se guardan aquí con permisos 600."))
                         .font(.caption).foregroundStyle(Theme.secondaryText)
                 }
+                }
             }
             .padding(28)
+            .frame(maxWidth: 860, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
         }
         .onChange(of: model.settings) { model.saveSettings() }
         .onAppear { model.refreshNotificationStatus(); model.refreshProviders() }
@@ -437,5 +478,54 @@ struct OwnUsagePanel: View {
             Text(plural(tokens.messages, "%d consulta", "%d consultas")).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Sections of Settings.
+enum SettingsPane: String, CaseIterable, Identifiable {
+    case general, ai, island, game, notifications, monitoring, projects, updates, about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return L("General")
+        case .ai: return L("Inteligencia artificial")
+        case .island: return L("Isla y lanzador")
+        case .game: return L("Modo juego")
+        case .notifications: return L("Notificaciones")
+        case .monitoring: return L("Monitoreo")
+        case .projects: return L("Proyectos")
+        case .updates: return L("Actualizaciones")
+        case .about: return L("Datos y consumo")
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .general: return L("Idioma, tema e iconos")
+        case .ai: return L("Motor, modelos, piloto automático y lo que gasta DevDeck")
+        case .island: return L("La píldora de arriba, sus tableros y el atajo global")
+        case .game: return L("Cuándo se activa y qué pausa mientras juegas")
+        case .notifications: return L("Avisos del sistema y de DevDeck")
+        case .monitoring: return L("Frecuencia de muestreo, historial y arranque")
+        case .projects: return L("Carpetas donde DevDeck busca tus proyectos")
+        case .updates: return L("Versión instalada y versiones nuevas")
+        case .about: return L("Lo que ocupa DevDeck y dónde guarda sus datos")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .ai: return "sparkles"
+        case .island: return "rectangle.topthird.inset.filled"
+        case .game: return "gamecontroller"
+        case .notifications: return "bell"
+        case .monitoring: return "waveform.path.ecg"
+        case .projects: return "folder"
+        case .updates: return "arrow.down.circle"
+        case .about: return "externaldrive"
+        }
     }
 }
