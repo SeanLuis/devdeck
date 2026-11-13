@@ -14,7 +14,7 @@ struct AgentsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HeroHeader(section: .agents, title: L("Agentes de IA"), subtitle: L("Claude Code, Codex y otros: qué corre, cuánta RAM usan y cuántos tokens gastan")) {
                     Button {
-                        Task { await model.refreshAgentUsage() }
+                        Task { await model.refreshAgentUsage(); await model.refreshAccounts(force: true) }
                     } label: {
                         if model.agentScanning { ProgressView().controlSize(.small) } else { Label(L("Actualizar"), systemImage: "arrow.clockwise") }
                     }
@@ -30,7 +30,9 @@ struct AgentsView: View {
                 }
 
                 AgentWorkPanel(work: work)
+                LeftoversPanel()
                 AccountsPanel()
+                BudgetsPanel()
 
                 HStack(alignment: .top, spacing: 12) {
                     Panel(L("Tokens por día · últimos %@ días", "\(report.days)")) {
@@ -45,6 +47,9 @@ struct AgentsView: View {
                                     HStack {
                                         Text(item.model).font(.system(size: 12, design: .monospaced)).lineLimit(1)
                                         Spacer()
+                                        if let dollars = model.prices.cost(item.tokens, model: item.model) {
+                                            Text(costText(dollars)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
+                                        }
                                         Text(compact(item.tokens.billable)).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondaryText)
                                     }
                                     UsageBar(fraction: Double(item.tokens.billable) / max(maxValue, 1), tint: Theme.tint)
@@ -69,7 +74,9 @@ struct AgentsView: View {
                                     Spacer()
                                     VStack(alignment: .trailing, spacing: 1) {
                                         Text(compact(item.tokens.billable)).font(.system(size: 13).monospacedDigit())
-                                        Text(L("%d respuestas", item.tokens.messages)).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                                        let cost = report.cost(model.prices) { $0.agent == item.agent && $0.project == item.project }
+                                        Text(cost.hasPrice ? cost.text + " · " + L("%d respuestas", item.tokens.messages) : L("%d respuestas", item.tokens.messages))
+                                            .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
                                     }
                                 }
                             }
@@ -87,6 +94,8 @@ struct AgentsView: View {
                 }
                 Panel(L("Consumo del propio DevDeck")) { OwnUsagePanel() }
                 Text(L("Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de Claude Code vienen de claude-swap cuando está instalado."))
+                    .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                Text(L("El coste (≈ $) es lo que valdrían esos tokens a precio de lista de la API; con una suscripción no se paga por token. Los modelos sin precio conocido no suman: puedes añadirlos en prices.json, en la carpeta de datos de DevDeck."))
                     .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
             }
             .padding(28)
@@ -148,6 +157,15 @@ struct AgentSessionRow: View {
                         }
                     }
                     Text(caption).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(1).truncationMode(.middle)
+                    if let waiting = row.waitingFor, !waiting.isEmpty {
+                        Text(L("Espera: %@", waiting)).font(.system(size: 11)).foregroundStyle(Theme.warning).lineLimit(1)
+                    } else if let activity = row.activity {
+                        HStack(spacing: 5) {
+                            if let tool = activity.tool { Text(tool).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.tertiaryText) }
+                            Text(activity.detail).font(.system(size: 11)).foregroundStyle(Theme.secondaryText).lineLimit(1).truncationMode(.tail)
+                            if row.state != .working, let at = activity.at { Text("· " + relative(at)).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText) }
+                        }
+                    }
                 }
                 Spacer(minLength: 8)
                 if let load = row.load {
@@ -243,9 +261,10 @@ struct SubagentRow: View {
     }
 }
 
-/// Logins of each agent with their limits; switching goes through claude-swap and always asks first.
+/// Logins of each agent with their limits. Switching always asks first.
 struct AccountsPanel: View {
     @Environment(AppModel.self) private var model
+    @State private var confirmingImport = false
 
     var body: some View {
         let report = model.accounts
@@ -253,12 +272,28 @@ struct AccountsPanel: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(report.accounts.enumerated()), id: \.element.id) { index, account in
                     if index > 0 { Divider().overlay(Theme.ink(0.05)).padding(.vertical, 9) }
-                    AccountRow(account: account, canSwitch: report.switcherPath != nil)
+                    AccountRow(account: account, canSwitch: report.native || report.switcherPath != nil)
                 }
                 if report.accounts.isEmpty {
                     Text(L("No hay ninguna sesión iniciada en Claude Code ni en Codex.")).font(.system(size: 12)).foregroundStyle(Theme.tertiaryText)
                 }
+                if model.vault != nil {
+                    HStack(spacing: 8) {
+                        if report.adoptable > 0 {
+                            Button(L("Importar las %d cuentas de claude-swap", report.adoptable)) { confirmingImport = true }.buttonStyle(.borderedProminent)
+                        }
+                        Text(L("Para tener varias: inicia sesión con cada una en el agente y pulsa “Guardar” en su fila. Después se cambia desde aquí."))
+                            .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(2)
+                        Spacer()
+                    }
+                    .padding(.top, 12)
+                }
             }
+        }
+        .confirmationDialog(L("¿Importar las cuentas de claude-swap?"), isPresented: $confirmingImport) {
+            Button(L("Importar")) { Task { await model.adoptClaudeSwapAccounts() } }
+        } message: {
+            Text(L("DevDeck copia cada sesión guardada a su propio almacén del llavero, sin volver a iniciar sesión. No cambia la cuenta en uso ni borra nada de claude-swap."))
         }
     }
 }
@@ -268,13 +303,16 @@ struct AccountRow: View {
     let account: AgentAccount
     let canSwitch: Bool
     @State private var confirming = false
+    @State private var confirmingRemoval = false
+    @State private var renaming = false
+    @State private var alias = ""
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             AgentIcon(name: account.agent, size: 24)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(account.email).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                    Text(account.alias ?? account.email).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                     if account.active { Pill(text: L("en uso"), color: Theme.success) }
                     if let plan = account.plan { Pill(text: plan) }
                 }
@@ -290,21 +328,65 @@ struct AccountRow: View {
                 Color.clear.frame(height: 1)
                 if model.switchingAccount == account.id {
                     ProgressView().controlSize(.small)
-                } else if canSwitch, account.agent == "Claude Code", !account.active, account.number != nil {
+                } else if !account.active, account.number != nil, account.vaultID != nil || (canSwitch && account.agent == "Claude Code") {
                     Button(L("Usar")) { confirming = true }.buttonStyle(.bordered).disabled(model.switchingAccount != nil)
+                } else if canSave {
+                    Button(L("Guardar")) { Task { await model.saveCurrentAccount(agent: account.agent) } }.buttonStyle(.bordered)
+                        .help(L("Guarda esta sesión en DevDeck para poder volver a ella sin iniciar sesión de nuevo"))
                 }
             }
             .frame(width: 64, alignment: .trailing)
         }
-        .confirmationDialog(L("¿Cambiar Claude Code a %@?", account.email), isPresented: $confirming) {
+        .contentShape(Rectangle())
+        .contextMenu {
+            if account.vaultID != nil {
+                Button(L("Renombrar…")) { alias = account.alias ?? ""; renaming = true }
+                Button(L("Subir")) { Task { await model.moveAccount(account, by: -1) } }
+                Button(L("Bajar")) { Task { await model.moveAccount(account, by: 1) } }
+                Divider()
+                Button(L("Quitar de DevDeck…"), role: .destructive) { confirmingRemoval = true }
+            }
+        }
+        .confirmationDialog(L("¿Cambiar %@ a %@?", account.agent, account.email), isPresented: $confirming) {
             Button(L("Cambiar de cuenta")) { Task { await model.switchClaudeAccount(account) } }
         } message: {
-            Text(L("Las sesiones nuevas usarán esta cuenta. Las que ya están abiertas pueden necesitar reiniciarse."))
+            Text(switchMessage)
         }
+        .confirmationDialog(L("¿Quitar %@ de DevDeck?", account.email), isPresented: $confirmingRemoval) {
+            Button(L("Quitar"), role: .destructive) { Task { await model.removeAccount(account) } }
+        } message: {
+            Text(account.active ? L("Claude Code seguirá usando esta cuenta; DevDeck solo deja de guardarla.")
+                 : L("Se borra la sesión guardada. Para volver a usar esta cuenta habrá que iniciar sesión otra vez."))
+        }
+        .alert(L("Nombre para la cuenta"), isPresented: $renaming) {
+            TextField(account.email, text: $alias)
+            Button(L("Guardar")) { Task { await model.renameAccount(account, alias: alias) } }
+            Button(L("Cancelar"), role: .cancel) {}
+        }
+    }
+
+    /// The login in use that DevDeck does not keep yet. While claude-swap still manages the Claude Code accounts
+    /// they are imported together, not one by one.
+    private var canSave: Bool {
+        guard model.vault != nil, account.active, account.vaultID == nil, account.email != "—", account.email != "API key" else { return false }
+        if account.agent == "Codex" { return true }
+        return account.agent == "Claude Code" && (model.accounts.native || model.accounts.adoptable == 0)
+    }
+
+    private var switchMessage: String {
+        if account.agent == "Codex" {
+            let running = model.openCodexProcesses
+            let base = L("Las sesiones nuevas de Codex usarán esta cuenta.")
+            return running > 0 ? L("Codex está abierto: ciérralo antes de cambiar, o puede volver a escribir la cuenta anterior.") + " " + base : base
+        }
+        let open = model.openClaudeSessions
+        let base = L("Las sesiones nuevas usarán esta cuenta. Las que ya están abiertas pueden necesitar reiniciarse.")
+        return open > 0 ? plural(open, "Hay %d sesión de Claude Code abierta.", "Hay %d sesiones de Claude Code abiertas.") + " " + base : base
     }
 
     private var caption: String {
         var parts = [account.agent]
+        if account.alias != nil { parts.append(account.email) }
         if let number = account.number { parts.append(L("cuenta %d", number)) }
         if let organization = account.organization, !organization.isEmpty { parts.append(organization) }
         if let note = account.note { parts.append(L(note)) }
@@ -319,7 +401,11 @@ struct AccountRow: View {
         let window = model.agentUsage.recent(agent: account.agent, hours: 5)
         let week = model.agentUsage.total(agent: account.agent)
         return VStack(alignment: .trailing, spacing: 2) {
-            Text(L("%@ tokens en 5 h · %@ en 7 días", compact(window.billable), compact(week.billable))).font(.system(size: 12).monospacedDigit())
+            if account.vaultID != nil, !account.active {
+                Text(L("Límites sin leer todavía")).font(.system(size: 12))
+            } else {
+                Text(L("%@ tokens en 5 h · %@ en 7 días", compact(window.billable), compact(week.billable))).font(.system(size: 12).monospacedDigit())
+            }
             Text(L("Uso medido en este Mac; el agente no publica su límite.")).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
         }
     }
@@ -358,6 +444,14 @@ func relative(_ date: Date) -> String {
     var style = Date.RelativeFormatStyle(presentation: .named, unitsStyle: .abbreviated)
     style.locale = L10n.language.locale
     return date.formatted(style)
+}
+
+/// "≈ $12.40" for a priced amount.
+func costText(_ dollars: Double) -> String {
+    var estimate = CostEstimate()
+    estimate.dollars = dollars
+    estimate.pricedTokens = 1
+    return estimate.text
 }
 
 func compact(_ value: UInt64) -> String {
@@ -401,7 +495,10 @@ struct AgentCard: View {
                 stat(L("7 días"), week.messages > 0 ? compact(week.billable) : "—")
             }
             if week.cacheRead > 0 {
-                Text(L("%@ leídos de caché · %@ respuestas", compact(week.cacheRead), "\(week.messages)")).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                let cost = model.agentUsage.cost(model.prices) { $0.agent == install.name }
+                Text(cost.hasPrice ? L("%@ en 7 días", cost.text) + " · " + L("%@ leídos de caché", compact(week.cacheRead))
+                     : L("%@ leídos de caché · %@ respuestas", compact(week.cacheRead), "\(week.messages)"))
+                    .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(1)
             }
         }
         .padding(14)

@@ -86,6 +86,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var historyMinutes: Double = 30
     public var projectRoots: [String] = ProjectDiscovery.defaultRoots
     public var notificationsEnabled = true
+    /// Tell when an agent finishes a long turn or stops to ask something.
+    public var notifyAgentWaiting = true
+    /// Suggest another saved account when the one in use is about to hit its limit (it only suggests).
+    public var suggestAccountSwitch = true
+    public var accountSwitchPercent: Double = 90
     public var ai = AIConfig()
     /// "system" | "light" | "dark"
     public var appearance = "system"
@@ -118,6 +123,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         historyMinutes = try c.decodeIfPresent(Double.self, forKey: .historyMinutes) ?? d.historyMinutes
         projectRoots = try c.decodeIfPresent([String].self, forKey: .projectRoots) ?? d.projectRoots
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
+        notifyAgentWaiting = try c.decodeIfPresent(Bool.self, forKey: .notifyAgentWaiting) ?? d.notifyAgentWaiting
+        suggestAccountSwitch = try c.decodeIfPresent(Bool.self, forKey: .suggestAccountSwitch) ?? d.suggestAccountSwitch
+        accountSwitchPercent = try c.decodeIfPresent(Double.self, forKey: .accountSwitchPercent) ?? d.accountSwitchPercent
         ai = try c.decodeIfPresent(AIConfig.self, forKey: .ai) ?? d.ai
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? d.appearance
         islandEnabled = try c.decodeIfPresent(Bool.self, forKey: .islandEnabled) ?? d.islandEnabled

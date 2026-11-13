@@ -3,6 +3,7 @@ import Foundation
 public enum RuleMetric: String, Codable, CaseIterable, Sendable {
     case groupMemoryMB, groupCPU, systemMemoryPercent, swapUsedMB, pressureLevel, diskFreeGB, headlessBrowsers
     case swapGrowthMBPerMin, swapInMBPerSec
+    case batteryPercent, thermalLevel
 
     public var title: String {
         switch self {
@@ -15,11 +16,13 @@ public enum RuleMetric: String, Codable, CaseIterable, Sendable {
         case .headlessBrowsers: return L("Chrome headless abiertos")
         case .swapGrowthMBPerMin: return L("Swap creciendo (MB/min)")
         case .swapInMBPerSec: return L("Lectura de swap (MB/s)")
+        case .batteryPercent: return L("Batería sin cargador (%)")
+        case .thermalLevel: return L("Estado térmico (0–3)")
         }
     }
 
     public var isGroupMetric: Bool { self == .groupMemoryMB || self == .groupCPU }
-    public var defaultComparator: RuleComparator { self == .diskFreeGB ? .below : .above }
+    public var defaultComparator: RuleComparator { self == .diskFreeGB || self == .batteryPercent ? .below : .above }
 }
 
 public enum RuleComparator: String, Codable, CaseIterable, Sendable {
@@ -77,6 +80,8 @@ public struct Rule: Codable, Identifiable, Hashable, Sendable {
             Rule(name: "Un proyecto usa > 6 GB", metric: .groupMemoryMB, threshold: 6144, sustainSeconds: 30, cooldownSeconds: 1800),
             Rule(name: "Leyendo de swap (lentitud)", metric: .swapInMBPerSec, threshold: 5, sustainSeconds: 30, cooldownSeconds: 900),
             Rule(name: "Swap creciendo rápido", metric: .swapGrowthMBPerMin, threshold: 200, sustainSeconds: 60, action: .askAI, cooldownSeconds: 1800),
+            Rule(name: "Batería baja", metric: .batteryPercent, threshold: 20, sustainSeconds: 30, cooldownSeconds: 1800),
+            Rule(name: "La Mac se está calentando", metric: .thermalLevel, threshold: 1, sustainSeconds: 60, cooldownSeconds: 1800),
         ]
     }
 }
@@ -114,10 +119,11 @@ public final class RuleEngine {
 
     public init() {}
 
-    public func evaluate(rules: [Rule], snapshot: Snapshot, system: SystemSample, swap: SwapReport = .empty, now: Date = Date()) -> [RuleFiring] {
+    public func evaluate(rules: [Rule], snapshot: Snapshot, system: SystemSample, swap: SwapReport = .empty, power: PowerStatus = .unknown,
+                         now: Date = Date()) -> [RuleFiring] {
         var firings: [RuleFiring] = []
         for rule in rules where rule.enabled {
-            for (groupID, groupName, value) in values(for: rule, snapshot: snapshot, system: system, swap: swap) {
+            for (groupID, groupName, value) in values(for: rule, snapshot: snapshot, system: system, swap: swap, power: power) {
                 let key = "\(rule.id)|\(groupID ?? "")"
                 var state = states[key] ?? State()
                 let breached = rule.comparator == .above ? value > rule.threshold : value < rule.threshold
@@ -140,7 +146,7 @@ public final class RuleEngine {
         return firings
     }
 
-    private func values(for rule: Rule, snapshot: Snapshot, system: SystemSample, swap: SwapReport) -> [(String?, String?, Double)] {
+    private func values(for rule: Rule, snapshot: Snapshot, system: SystemSample, swap: SwapReport, power: PowerStatus) -> [(String?, String?, Double)] {
         switch rule.metric {
         case .groupMemoryMB, .groupCPU:
             let groups: [ProcessGroup]
@@ -156,6 +162,9 @@ public final class RuleEngine {
         case .headlessBrowsers: return [(Classifier.headlessID, "Chrome headless", Double(snapshot.headlessBrowserCount))]
         case .swapGrowthMBPerMin: return [(nil, nil, swap.growthMBPerMin)]
         case .swapInMBPerSec: return [(nil, nil, swap.swapInRate / 1_048_576)]
+        // Plugged in, or a Mac without battery: nothing to warn about.
+        case .batteryPercent: return power.onAC ? [] : power.batteryPercent.map { [(nil, nil, $0)] } ?? []
+        case .thermalLevel: return [(nil, nil, Double(power.thermalLevel))]
         }
     }
 
@@ -171,6 +180,8 @@ public final class RuleEngine {
         case .headlessBrowsers: return L("%@ Chrome headless abiertos a la vez", "\(Int(value))")
         case .swapGrowthMBPerMin: return L("El swap crece %@ MB por minuto", "\(Int(value))")
         case .swapInMBPerSec: return L("Leyendo %@ MB/s de swap: la Mac se siente lenta", String(format: "%.1f", value))
+        case .batteryPercent: return L("Batería al %@%% y sin cargador", "\(Int(value))")
+        case .thermalLevel: return value >= 3 ? L("Temperatura crítica: macOS está frenando el procesador") : L("La Mac está caliente y macOS empieza a frenar el procesador")
         }
     }
 
@@ -178,6 +189,7 @@ public final class RuleEngine {
         switch rule.metric {
         case .pressureLevel: return value >= 4 ? .critical : .warning
         case .diskFreeGB: return value < 5 ? .critical : .warning
+        case .thermalLevel: return value >= 3 ? .critical : .warning
         default: return .warning
         }
     }

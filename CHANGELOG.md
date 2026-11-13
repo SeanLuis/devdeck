@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Accounts: DevDeck keeps several Claude Code logins in its own keychain store and switches between them, with the real limits of each one read from its own account. Accounts managed by claude-swap can be imported without logging in again. Codex logins can be saved and switched too, and DevDeck suggests another account when the one in use is close to its limit
+- Budgets: a token ceiling for a project, an agent or everything, or a share of an account's limit, with a notice at 80% and 100%
+- A notice when an agent finishes a long turn or stops to ask something
+- Each open session shows the last step its agent took
+- Estimated cost at API list prices, per agent, model and project (`prices.json` adds or overrides prices)
+- Agent leftovers: tool servers, headless browsers and commands that an agent started and left running
+- "Start everything" brings up a project's containers and every remembered command that is not running
+- Work profiles: save what is running and switch to it later; the plan is shown before anything is started or closed
+- Battery and thermal state in the sidebar, with rules for low battery and heat
+
 ## 0.1.4
 
 - Settings reorganized into sections (General, AI, Island and launcher, Game mode, Notifications, Monitoring, Projects, Updates, Data), one at a time

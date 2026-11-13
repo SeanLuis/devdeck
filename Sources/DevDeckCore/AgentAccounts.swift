@@ -29,6 +29,9 @@ public struct AgentAccount: Identifiable, Hashable, Sendable {
     public var usageFetched: Date?
     /// Free-form note (credits, status reported by the switcher…).
     public var note: String?
+    /// Id in DevDeck's own account store, when DevDeck manages this login.
+    public var vaultID: String?
+    public var alias: String?
 
     public init(agent: String, number: Int? = nil, email: String, organization: String? = nil, plan: String? = nil, active: Bool) {
         self.agent = agent; self.number = number; self.email = email; self.organization = organization; self.plan = plan; self.active = active
@@ -40,6 +43,10 @@ public struct AccountsReport: Sendable {
     /// Path of `cswap` (claude-swap) when installed: it knows the real limits and can switch accounts.
     public var switcherPath: String?
     public var loadedAt: Date?
+    /// True when the Claude Code accounts come from DevDeck's own store.
+    public var native = false
+    /// Accounts claude-swap manages that DevDeck could adopt.
+    public var adoptable = 0
 
     public static let empty = AccountsReport()
     public init() {}
@@ -49,10 +56,39 @@ public struct AccountsReport: Sendable {
 
 /// Reads the accounts the agents are logged into. Everything stays on this Mac; tokens are never read out of the files.
 public enum AgentAccounts {
-    public static func load(env: [String: String], codexPlan: CodexPlan?, home: String = NSHomeDirectory()) async -> AccountsReport {
+    /// Accounts from DevDeck's own store, with the limits last read for each.
+    public static func native(vault: AccountVault, usage: [String: AccountUsage]) -> [AgentAccount] {
+        let active = vault.activeAccount()?.id
+        let tier = claudeProfile(home: vault.home)?.plan
+        return vault.accounts().filter { $0.agent == AccountVault.claude }.enumerated().map { index, stored in
+            var account = AgentAccount(agent: stored.agent, number: index + 1, email: stored.email, organization: stored.organizationName,
+                                       plan: stored.id == active ? tier : nil, active: stored.id == active)
+            account.vaultID = stored.id
+            account.alias = stored.alias
+            if let reading = usage[stored.id] {
+                account.windows = reading.usageWindows()
+                account.usageFetched = reading.fetchedAt
+                account.note = reading.note
+            }
+            return account
+        }
+    }
+
+    public static func load(env: [String: String], codexPlan: CodexPlan?, home: String = NSHomeDirectory(),
+                            vault: AccountVault? = nil, usage: [String: AccountUsage] = [:]) async -> AccountsReport {
         var report = AccountsReport()
         let profile = claudeProfile(home: home)
-        if let path = LoginEnvironment.which("cswap", env: env) {
+        if let vault {
+            let own = native(vault: vault, usage: usage)
+            if !own.isEmpty {
+                report.native = true
+                report.accounts = own
+                // Logged into something that was never saved: show it too, so it can be added.
+                if let profile, !own.contains(where: \.active) { report.accounts.insert(profile, at: 0) }
+            }
+            report.adoptable = vault.adoptableCount
+        }
+        if !report.native, let path = LoginEnvironment.which("cswap", env: env) {
             let result = await Shell.run(path, ["list", "--json"], env: env, timeout: 12)
             let managed = parseSwitcher(Data(result.stdout.utf8))
             if !managed.isEmpty {
@@ -64,8 +100,24 @@ public enum AgentAccounts {
                 }
             }
         }
-        if report.accounts.isEmpty, let profile { report.accounts.append(profile) }
-        if let codex = codexProfile(home: home, plan: codexPlan) { report.accounts.append(codex) }
+        if !report.native, report.accounts.isEmpty, let profile { report.accounts.append(profile) }
+        let codexLive = codexProfile(home: home, plan: codexPlan)
+        let savedCodex = vault?.accounts().filter { $0.agent == AccountVault.codex } ?? []
+        if savedCodex.isEmpty {
+            if let codexLive { report.accounts.append(codexLive) }
+        } else {
+            let active = vault?.activeCodexAccount()?.id
+            for (index, stored) in savedCodex.enumerated() {
+                var account = AgentAccount(agent: AccountVault.codex, number: index + 1, email: stored.email, plan: planLabel(stored.organizationName),
+                                           active: stored.id == active)
+                account.vaultID = stored.id
+                account.alias = stored.alias
+                // Codex only reports limits in the sessions of the login in use.
+                if account.active, let codexLive { account.windows = codexLive.windows; account.note = codexLive.note; account.plan = codexLive.plan ?? account.plan }
+                report.accounts.append(account)
+            }
+            if active == nil, let codexLive { report.accounts.append(codexLive) }
+        }
         report.loadedAt = Date()
         return report
     }
@@ -174,3 +226,35 @@ public enum AgentAccounts {
         return account
     }
 }
+
+/// "This account is about to run out and that one has room": the suggestion DevDeck makes. It never switches on its own.
+public struct AccountSwitchSuggestion: Hashable, Sendable {
+    public let from: AgentAccount
+    public let to: AgentAccount
+    /// The window that is running out, and how full it is.
+    public let window: UsageWindow
+
+    /// Changes when the window resets, so each cycle is announced once.
+    public var key: String { "\(from.id)|\(window.name)|\(Int((window.resetsAt?.timeIntervalSince1970 ?? 0) / 3600))" }
+}
+
+extension AccountsReport {
+    /// The busiest window of an account (per-model quotas included).
+    static func peak(_ account: AgentAccount) -> UsageWindow? { account.windows.max { $0.percent < $1.percent } }
+
+    /// When the Claude Code account in use passes `threshold` and a saved one has clearly more room, the one with the most room.
+    public func switchSuggestion(threshold: Double, now: Date = Date()) -> AccountSwitchSuggestion? {
+        let claude = accounts(of: "Claude Code").filter { $0.vaultID != nil }
+        guard let active = claude.first(where: \.active), let hot = Self.peak(active), hot.percent >= threshold else { return nil }
+        let fresh: TimeInterval = 1800
+        let candidates = claude.filter { candidate in
+            // Only accounts whose limits were read recently: an old reading is not a reason to move.
+            guard !candidate.active, !candidate.windows.isEmpty, candidate.note == nil,
+                  let read = candidate.usageFetched, now.timeIntervalSince(read) < fresh, let peak = Self.peak(candidate) else { return false }
+            return peak.percent <= min(70, threshold - 20)
+        }
+        guard let best = candidates.min(by: { (Self.peak($0)?.percent ?? 100) < (Self.peak($1)?.percent ?? 100) }) else { return nil }
+        return AccountSwitchSuggestion(from: active, to: best, window: hot)
+    }
+}
+

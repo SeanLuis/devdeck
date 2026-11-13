@@ -166,9 +166,31 @@ struct SidebarFooter: View {
             }
             footerBar("RAM", sys.memPercent / 100)
             footerBar("CPU", sys.cpuPercent / 100)
+            let power = model.power
+            if power.hasBattery || power.thermalLevel > 0 {
+                HStack(spacing: 5) {
+                    if let percent = power.batteryPercent {
+                        Image(systemName: power.charging ? "battery.100percent.bolt" : percent < 20 ? "battery.25percent" : "battery.75percent")
+                            .font(.system(size: 10)).foregroundStyle(!power.onAC && percent < 20 ? Theme.warning : Theme.tertiaryText)
+                        Text(batteryText(power, percent)).font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.secondaryText).lineLimit(1)
+                    }
+                    Spacer(minLength: 2)
+                    if power.thermalLevel > 0 {
+                        Image(systemName: "thermometer.medium").font(.system(size: 10)).foregroundStyle(power.thermalLevel >= 2 ? Theme.danger : Theme.warning)
+                        Text(L(power.thermalLabel)).font(.system(size: 10)).foregroundStyle(power.thermalLevel >= 2 ? Theme.danger : Theme.warning).lineLimit(1)
+                    }
+                }
+            }
         }
         .padding(10)
         .glass(cornerRadius: 8)
+    }
+
+    private func batteryText(_ power: PowerStatus, _ percent: Double) -> String {
+        var text = "\(Int(percent.rounded()))%"
+        if let minutes = power.minutesLeft { text += " · " + (minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min") }
+        else if power.charging { text += " · " + L("cargando") }
+        return text
     }
 
     private func footerBar(_ title: String, _ value: Double) -> some View {

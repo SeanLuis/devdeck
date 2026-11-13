@@ -42,6 +42,10 @@ enum Entry {
             CLI.aiSmoke()
             return
         }
+        if args.contains("--accounts-dump") {
+            CLI.accountsDump(readUsage: args.contains("--usage"))
+            return
+        }
         if args.contains("--dump") {
             CLI.dump()
             return
@@ -324,6 +328,40 @@ enum CLI {
         done.wait()
     }
 
+    /// `--accounts-dump [--usage]`: what the account store sees. Read-only; prints no token, ever.
+    static func accountsDump(readUsage: Bool) {
+        let vault = AccountVault(directory: JSONStore().directory)
+        func mask(_ email: String) -> String {
+            let parts = email.split(separator: "@", maxSplits: 1)
+            return parts.count == 2 ? "\(parts[0].prefix(2))…@\(parts[1])" : "…"
+        }
+        let live = vault.liveIdentity()
+        let liveCredentials = vault.liveCredentials()
+        print("en uso: \(live.map { mask($0.email) } ?? "nadie") · credencial legible: \(ClaudeCredential.isLogin(liveCredentials)) · token caduca: \(ClaudeCredential.expiresAt(liveCredentials).map { "\($0)" } ?? "—")")
+        print("config: \(Fmt.tilde(vault.configPath))")
+        print("almacén propio: \(vault.accounts().count) cuentas")
+        for account in vault.accounts() {
+            let saved = vault.credentials(for: account)
+            print("  \(mask(account.email)) [\(account.agent)] legible: \(ClaudeCredential.isLogin(saved)) · caduca: \(ClaudeCredential.expiresAt(saved).map { "\($0)" } ?? "—")")
+        }
+        let preview = vault.legacyPreview()
+        print("claude-swap: \(preview.count) cuentas")
+        for item in preview {
+            print("  \(item.number) \(mask(item.email)) legible: \(item.readable) · caduca: \(item.tokenExpires.map { "\($0)" } ?? "—")")
+        }
+        guard readUsage, let token = ClaudeCredential.accessToken(liveCredentials) else { return }
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            switch await ClaudeOAuth.usage(accessToken: token) {
+            case .success(let windows):
+                for window in windows { print("  límite \(window.name): \(Int(window.percent))% · reinicia \(window.resetsAt.map { "\($0)" } ?? "—")") }
+            case .failure(let failure): print("  uso no disponible: \(failure)")
+            }
+            done.signal()
+        }
+        done.wait()
+    }
+
     static func dump() {
         let done = DispatchSemaphore(value: 0)
         Task.detached {
@@ -337,6 +375,11 @@ enum CLI {
                 print("[\(g.kind.rawValue)] \(g.name) — \(Fmt.bytes(g.memoryBytes)), CPU \(Fmt.percent(g.cpuPercent)), \(g.processCount) procs\(ports.isEmpty ? "" : ", puertos \(ports)")")
                 for s in g.services { print("    servicio \(s.rootPid): \(s.label) [\(s.framework ?? "-")] \(Fmt.bytes(s.memoryBytes)) puertos=\(s.ports)") }
                 if !g.origins.isEmpty { print("    lanzados por: \(g.origins)") }
+            }
+            var listening: [Int32: [UInt16]] = [:]
+            for binding in snap.ports { listening[binding.pid, default: []].append(binding.port) }
+            for item in AgentLeftovers.find(processes: snap.processes, listening: listening) {
+                print("[resto:\(item.kind.rawValue)] \(item.rootPid) \(item.command) — \(Fmt.bytes(item.memoryBytes)), \(item.pids.count) procs, \(Fmt.duration(since: item.since))\(item.ports.isEmpty ? "" : ", puertos \(item.ports)")")
             }
             done.signal()
         }

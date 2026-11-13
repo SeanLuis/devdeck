@@ -506,3 +506,239 @@ struct TimelineTests {
         #expect(TimelineAnalysis.thin(points, to: 30).count == 30)
     }
 }
+
+@Suite("Budgets")
+struct BudgetTests {
+    static func usage(now: Date) -> AgentUsageReport {
+        var report = AgentUsageReport()
+        func tokens(_ n: UInt64) -> TokenCount { var t = TokenCount(); t.output = n; t.cacheRead = n * 9; t.messages = 1; return t }
+        let today = AgentUsageReport.dayString(now)
+        let before = AgentUsageReport.dayString(now.addingTimeInterval(-3 * 86_400))
+        report.buckets[UsageKey(agent: "Claude Code", day: today, model: "m", project: "/code/shop")] = tokens(4_000_000)
+        report.buckets[UsageKey(agent: "Claude Code", day: before, model: "m", project: "/code/shop/packages/ui")] = tokens(5_000_000)
+        report.buckets[UsageKey(agent: "Codex", day: today, model: "g", project: "/code/shopping")] = tokens(1_000_000)
+        return report
+    }
+
+    @Test func countsByScopeAndPeriod() {
+        let now = Date()
+        let usage = Self.usage(now: now)
+        func used(_ kind: Budget.Kind, _ target: String, _ period: Budget.Period) -> Double {
+            Budgets.status(Budget(kind: kind, target: target, period: period, limit: 1), usage: usage, accounts: .empty, now: now).used
+        }
+        // Cache reads are not counted; a subfolder belongs to its project, a sibling with the same prefix does not.
+        #expect(used(.project, "/code/shop", .week) == 9_000_000)
+        #expect(used(.project, "/code/shop", .day) == 4_000_000)
+        #expect(used(.agent, "Codex", .week) == 1_000_000)
+        #expect(used(.all, "", .week) == 10_000_000)
+        #expect(used(.all, "", .day) == 5_000_000)
+    }
+
+    @Test func announcesEachLevelOncePerPeriod() {
+        let now = Date()
+        let usage = Self.usage(now: now)
+        let budget = Budget(kind: .all, period: .week, limit: 12_000_000)
+        var fired: [String: String] = [:]
+        let first = Budgets.evaluate([budget], usage: usage, accounts: .empty, fired: &fired, now: now)
+        #expect(first.map(\.level) == [80])
+        #expect(Budgets.evaluate([budget], usage: usage, accounts: .empty, fired: &fired, now: now).isEmpty)
+        var over = budget
+        over.limit = 9_000_000
+        #expect(Budgets.evaluate([over], usage: usage, accounts: .empty, fired: &fired, now: now).map(\.level) == [100])
+        // The next day it may be announced again; a removed budget leaves no state behind.
+        #expect(Budgets.evaluate([over], usage: usage, accounts: .empty, fired: &fired, now: now.addingTimeInterval(86_400)).count == 1)
+        _ = Budgets.evaluate([], usage: usage, accounts: .empty, fired: &fired, now: now)
+        #expect(fired.isEmpty)
+    }
+
+    @Test func accountBudgetReadsTheWindow() {
+        var accounts = AccountsReport()
+        var account = AgentAccount(agent: "Claude Code", email: "a@example.com", active: true)
+        account.windows = [UsageWindow(name: "7 días", percent: 82, resetsAt: Date().addingTimeInterval(3600))]
+        accounts.accounts = [account]
+        let week = Budgets.status(Budget(kind: .account, target: "a@example.com", period: .week, limit: 75), usage: .empty, accounts: accounts)
+        #expect(week.measurable && week.fraction > 1)
+        let fiveHours = Budgets.status(Budget(kind: .account, target: "a@example.com", period: .day, limit: 75), usage: .empty, accounts: accounts)
+        #expect(!fiveHours.measurable)
+        var fired: [String: String] = [:]
+        #expect(Budgets.evaluate([fiveHours.budget], usage: .empty, accounts: accounts, fired: &fired).isEmpty)
+    }
+}
+
+@Suite("Agent waiting")
+struct AgentWaitTests {
+    static func session(_ status: String, entry: String = "cli") -> LiveAgentSession {
+        LiveAgentSession(pid: 10, sessionID: "s1", cwd: "/code/shop", status: status, name: nil, entrypoint: entry, startedAt: nil, updatedAt: nil)
+    }
+
+    @Test func announcesTheEndOfALongTurnOnce() {
+        var tracker = AgentWaitTracker(minimumWork: 45)
+        let start = Date()
+        #expect(tracker.update([Self.session("idle")], now: start).isEmpty)
+        #expect(tracker.update([Self.session("busy")], now: start.addingTimeInterval(10)).isEmpty)
+        #expect(tracker.update([Self.session("busy")], now: start.addingTimeInterval(60)).isEmpty)
+        let events = tracker.update([Self.session("idle")], now: start.addingTimeInterval(100))
+        #expect(events.map(\.reason) == [.finished])
+        #expect(events.first.map { Int($0.worked) } == 90)
+        #expect(tracker.update([Self.session("idle")], now: start.addingTimeInterval(110)).isEmpty)
+    }
+
+    @Test func ignoresShortTurnsUnattendedSessionsAndFirstSight() {
+        var tracker = AgentWaitTracker(minimumWork: 45)
+        let start = Date()
+        // Already idle when first seen after being busy elsewhere: nothing to say.
+        #expect(tracker.update([Self.session("busy")], now: start).isEmpty)
+        #expect(tracker.update([Self.session("idle")], now: start.addingTimeInterval(5)).isEmpty)
+        #expect(tracker.update([Self.session("busy", entry: "sdk-ts")], now: start.addingTimeInterval(10)).isEmpty)
+        #expect(tracker.update([Self.session("idle", entry: "sdk-ts")], now: start.addingTimeInterval(500)).isEmpty)
+    }
+
+    @Test func aQuestionIsAnnouncedEvenAfterAShortTurn() {
+        var tracker = AgentWaitTracker(minimumWork: 45)
+        let start = Date()
+        _ = tracker.update([Self.session("idle")], now: start)
+        _ = tracker.update([Self.session("busy")], now: start.addingTimeInterval(1))
+        #expect(tracker.update([Self.session("waiting_for_permission")], now: start.addingTimeInterval(4)).map(\.reason) == [.needsInput])
+    }
+}
+
+@Suite("Agent activity")
+struct AgentActivityTests {
+    @Test func readsTheLastStepFromTheTail() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let lines = [
+            #"{"type":"assistant","timestamp":"2026-11-13T10:00:00.000Z","message":{"content":[{"type":"text","text":"Voy a mirar.\nSegunda línea"}]}}"#,
+            #"{"type":"assistant","timestamp":"2026-11-13T10:00:05.000Z","message":{"content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Edit","input":{"file_path":"/code/shop/src/cart.ts"}}]}}"#,
+            #"{"type":"user","message":{"content":[{"type":"tool_result","content":"done"}]}}"#,
+        ]
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        let activity = try #require(AgentActivityReader.claude(transcript: url.path))
+        #expect(activity.tool == "Edit")
+        #expect(activity.summary == "Edit · cart.ts")
+        #expect(activity.at != nil)
+        let text = try #require(AgentActivityReader.parseClaude(line: Data(lines[0].utf8)))
+        #expect(text.tool == nil && text.detail == "Voy a mirar.")
+    }
+
+    @Test func describesToolsByTheirMostTellingArgument() {
+        #expect(AgentActivityReader.toolDetail(name: "Bash", input: ["command": "swift test\n--filter X", "description": "Run tests"]) == "Run tests")
+        #expect(AgentActivityReader.toolDetail(name: "Bash", input: ["command": "swift test\n--filter X"]) == "swift test")
+        #expect(AgentActivityReader.toolDetail(name: "Grep", input: ["pattern": "TODO"]) == "TODO")
+        #expect(AgentActivityReader.clip(String(repeating: "a", count: 300)).count == 110)
+    }
+}
+
+@Suite("Pricing")
+struct PricingTests {
+    @Test func pricesByLongestPrefixAndLeavesUnknownModelsOut() {
+        let table = PriceTable()
+        var tokens = TokenCount()
+        tokens.input = 1_000_000; tokens.output = 1_000_000; tokens.cacheRead = 10_000_000; tokens.cacheWrite = 1_000_000
+        // Opus 5.5: 4 + 20 + 10 × 0.20 + 1.25 × 4
+        #expect(abs((table.cost(tokens, model: "claude-opus-5-5[1m]") ?? 0) - 31) < 0.0001)
+        #expect(table.price(for: "claude-opus-5-20260101")?.input == 5)
+        #expect(table.cost(tokens, model: "gpt-6-astra") == nil)
+
+        var report = AgentUsageReport()
+        report.buckets[UsageKey(agent: "Claude Code", day: "2026-11-13", model: "claude-opus-5-5", project: "/a")] = tokens
+        report.buckets[UsageKey(agent: "Codex", day: "2026-11-13", model: "gpt-6-astra", project: "/a")] = tokens
+        let all = report.cost(table)
+        #expect(all.partial && all.text == "≥ $31.00")
+        #expect(report.cost(table) { $0.agent == "Codex" }.text == "—")
+    }
+
+    @Test func userPricesOverrideAndExtend() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"[{"match":"gpt-6","input":1,"output":8},{"match":"claude-opus-5-5","input":40,"output":200,"cacheRead":2,"cacheWrite":50}]"#
+            .write(to: dir.appendingPathComponent("prices.json"), atomically: true, encoding: .utf8)
+        let table = PriceTable.load(directory: dir)
+        #expect(table.price(for: "gpt-6-astra")?.cacheWrite == 1.25)
+        #expect(table.price(for: "claude-opus-5-5")?.input == 40)
+        #expect(table.price(for: "claude-sonnet-5-5")?.output == 10)
+    }
+}
+
+@Suite("Agent leftovers")
+struct AgentLeftoverTests {
+    static func process(_ pid: Int32, parent: Int32, _ args: [String], exe: String = "/usr/local/bin/node", minutes: Double = 60, mb: UInt64 = 100) -> ProcessRecord {
+        ProcessRecord(pid: pid, ppid: parent, uid: 501, name: (exe as NSString).lastPathComponent, executablePath: exe, args: args, cwd: "/code/shop",
+                      startTime: Date().addingTimeInterval(-minutes * 60), memoryBytes: mb << 20, cpuTimeNs: 0, cpuPercent: 1, isMine: true)
+    }
+
+    @Test func findsOnlyOrphansThatAnAgentLeft() {
+        let list = [
+            Self.process(10, parent: 1, ["node", "/x/node_modules/@modelcontextprotocol/server-github/dist/index.js"]),
+            Self.process(11, parent: 10, ["node", "worker.js"], mb: 50),
+            Self.process(20, parent: 1, ["/bin/zsh", "-c", "source /Users/me/.claude/shell-snapshots/snapshot-zsh-1.sh && pnpm dev"], exe: "/bin/zsh", mb: 4),
+            Self.process(21, parent: 20, ["node", "/code/shop/node_modules/.bin/next", "dev"], mb: 900),
+            // Still has its agent, too young, or simply an ordinary app: not leftovers.
+            Self.process(30, parent: 99, ["node", "mcp-server-foo"]),
+            Self.process(31, parent: 1, ["node", "mcp-server-bar"], minutes: 2),
+            Self.process(32, parent: 1, ["/Applications/Safari.app/Contents/MacOS/Safari"], exe: "/Applications/Safari.app/Contents/MacOS/Safari"),
+        ]
+        let found = AgentLeftovers.find(processes: Dictionary(uniqueKeysWithValues: list.map { ($0.pid, $0) }), listening: [21: [3000]], ownPid: 1234)
+        #expect(found.map(\.rootPid) == [20, 10])
+        #expect(found[0].kind == .command && found[0].pids.sorted() == [20, 21] && found[0].ports == [3000])
+        #expect(found[0].command.contains("next"))
+        #expect(found[1].kind == .toolServer && found[1].memoryBytes == 150 << 20)
+    }
+}
+
+@Suite("Project start")
+struct ProjectStartTests {
+    @Test func plansOnlyWhatIsNotRunning() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-\(UUID().uuidString)", isDirectory: true).path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "services: {}".write(toFile: root + "/compose.yaml", atomically: true, encoding: .utf8)
+        let web = LaunchRecipe(projectRoot: root, cwd: root + "/web", argv: ["pnpm", "dev"], env: [:], label: "web", ports: [3000])
+        let webOld = LaunchRecipe(projectRoot: root, cwd: root + "/web", argv: ["pnpm", "dev", "--turbo"], env: [:], label: "web turbo", ports: [3000])
+        let api = LaunchRecipe(projectRoot: root, cwd: root + "/api", argv: ["pnpm", "start"], env: [:], label: "api", ports: [4000])
+        let worker = LaunchRecipe(projectRoot: root, cwd: root + "/worker", argv: ["node", "worker.js"], env: [:], label: "worker")
+        let live = ServiceInfo(rootPid: 7, label: "worker", command: "node worker.js", cwd: root + "/worker", appDir: nil, dirs: [root + "/worker"],
+                               framework: nil, ports: [], memoryBytes: 0, cpuPercent: 0, pids: [7], startTime: Date())
+        let plan = ProjectStart.plan(root: root, recipes: [web, webOld, api, worker], services: [live], boundPorts: [4000], containers: [], dockerAvailable: true)
+        #expect(plan.recipes.map(\.label) == ["web"])
+        #expect(plan.alreadyRunning == 2)
+        #expect(plan.composeFile?.hasSuffix("compose.yaml") == true)
+        #expect(ProjectStart.plan(root: root, recipes: [], services: [], boundPorts: [], containers: [], dockerAvailable: false).isEmpty)
+    }
+}
+
+@Suite("Work profiles")
+struct WorkProfileTests {
+    @Test func plansWhatToStartAndClose() {
+        var profile = WorkProfile(name: "Tienda", projects: ["/code/shop", "/code/api"], closeOtherProjects: true, closeHeadless: true)
+        let plan = WorkProfiles.plan(profile, running: ["/code/api", "/code/docs"], headlessRunning: false)
+        #expect(plan.start == ["/code/shop"] && plan.close == ["/code/docs"] && !plan.closeHeadless)
+        profile.closeOtherProjects = false
+        #expect(WorkProfiles.plan(profile, running: ["/code/api", "/code/shop", "/code/docs"], headlessRunning: false).isEmpty)
+        #expect(WorkProfiles.plan(profile, running: ["/code/api", "/code/shop"], headlessRunning: true).closeHeadless)
+    }
+}
+
+@Suite("Power")
+struct PowerTests {
+    @Test func batteryRuleOnlyFiresUnplugged() {
+        let rule = Rule(name: "Batería baja", metric: .batteryPercent, threshold: 20, sustainSeconds: 0, cooldownSeconds: 0)
+        var power = PowerStatus()
+        power.batteryPercent = 12
+        power.onAC = true
+        #expect(RuleEngine().evaluate(rules: [rule], snapshot: .empty, system: .empty, power: power).isEmpty)
+        power.onAC = false
+        #expect(RuleEngine().evaluate(rules: [rule], snapshot: .empty, system: .empty, power: power).count == 1)
+        #expect(RuleEngine().evaluate(rules: [rule], snapshot: .empty, system: .empty, power: .unknown).isEmpty)
+        let heat = Rule(name: "Calor", metric: .thermalLevel, threshold: 1, sustainSeconds: 0, cooldownSeconds: 0)
+        power.thermalLevel = 3
+        #expect(RuleEngine().evaluate(rules: [heat], snapshot: .empty, system: .empty, power: power).first?.severity == .critical)
+    }
+
+    @Test func readingThePowerSourcesDoesNotCrash() {
+        let status = PowerStatus.read()
+        #expect((0...3).contains(status.thermalLevel))
+        if let percent = status.batteryPercent { #expect((0...100).contains(percent)) }
+    }
+}

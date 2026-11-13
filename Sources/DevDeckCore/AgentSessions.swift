@@ -13,10 +13,14 @@ public struct LiveAgentSession: Hashable, Sendable, Identifiable {
     public let entrypoint: String?
     public let startedAt: Date?
     public let updatedAt: Date?
+    /// What it is blocked on, when Claude Code says so (a permission, a question).
+    public var waitingFor: String?
 
     public var isBusy: Bool { status == "busy" }
 
-    public init(pid: Int32, sessionID: String, cwd: String, status: String?, name: String?, entrypoint: String?, startedAt: Date?, updatedAt: Date?) {
+    public init(pid: Int32, sessionID: String, cwd: String, status: String?, name: String?, entrypoint: String?, startedAt: Date?, updatedAt: Date?,
+                waitingFor: String? = nil) {
+        self.waitingFor = waitingFor
         self.pid = pid; self.sessionID = sessionID; self.cwd = cwd; self.status = status; self.name = name
         self.entrypoint = entrypoint; self.startedAt = startedAt; self.updatedAt = updatedAt
     }
@@ -40,7 +44,8 @@ public enum LiveAgentSessions {
         }
         return LiveAgentSession(pid: pid, sessionID: session, cwd: (obj["cwd"] as? String) ?? "", status: obj["status"] as? String,
                                 name: obj["name"] as? String, entrypoint: obj["entrypoint"] as? String,
-                                startedAt: date("startedAt"), updatedAt: date("statusUpdatedAt") ?? date("updatedAt"))
+                                startedAt: date("startedAt"), updatedAt: date("statusUpdatedAt") ?? date("updatedAt"),
+                                waitingFor: obj["waitingFor"] as? String)
     }
 }
 
@@ -71,5 +76,70 @@ public struct ProcessTreeLoad: Hashable, Sendable {
             queue += children[pid] ?? []
         }
         return load
+    }
+}
+
+/// An agent session that stopped working and now needs its person.
+public struct AgentWaitEvent: Hashable, Sendable {
+    public enum Reason: String, Sendable {
+        /// The turn ended: the agent answered and waits for the next message.
+        case finished
+        /// It stopped mid-turn to ask (a permission, a question).
+        case needsInput
+    }
+
+    public let session: LiveAgentSession
+    public let reason: Reason
+    /// How long it had been working.
+    public let worked: TimeInterval
+}
+
+/// Watches the status of the open sessions and reports the moment one goes from working to waiting.
+/// Short turns are ignored: nobody walked away from a 10-second answer.
+public struct AgentWaitTracker: Sendable {
+    private struct State: Sendable { var status: String?; var busySince: Date? }
+    private var states: [String: State] = [:]
+    /// Minimum time working before the end of the turn is worth a notice.
+    public var minimumWork: TimeInterval
+
+    public init(minimumWork: TimeInterval = 45) { self.minimumWork = minimumWork }
+
+    /// Statuses that mean "blocked on the person" rather than "done".
+    public static func asksForInput(_ session: LiveAgentSession) -> Bool {
+        if session.waitingFor?.isEmpty == false { return true }
+        guard let status = session.status?.lowercased() else { return false }
+        return ["wait", "permission", "input", "approval", "blocked"].contains { status.contains($0) }
+    }
+
+    /// Sessions started by a program (SDK, headless runs) have nobody waiting in front of them.
+    public static func isAttended(_ session: LiveAgentSession) -> Bool {
+        guard let entry = session.entrypoint?.lowercased() else { return true }
+        return !entry.hasPrefix("sdk")
+    }
+
+    public mutating func update(_ sessions: [LiveAgentSession], now: Date = Date()) -> [AgentWaitEvent] {
+        var events: [AgentWaitEvent] = []
+        var next: [String: State] = [:]
+        for session in sessions {
+            var state = states[session.sessionID] ?? State()
+            // First sight of a session: take note, never announce what happened before DevDeck looked.
+            let known = states[session.sessionID] != nil
+            if session.isBusy {
+                if state.busySince == nil { state.busySince = known ? now : (session.updatedAt ?? now) }
+            } else {
+                if known, state.status == "busy", let since = state.busySince, Self.isAttended(session) {
+                    let worked = now.timeIntervalSince(since)
+                    let asks = Self.asksForInput(session)
+                    if asks || worked >= minimumWork {
+                        events.append(AgentWaitEvent(session: session, reason: asks ? .needsInput : .finished, worked: worked))
+                    }
+                }
+                state.busySince = nil
+            }
+            state.status = session.status
+            next[session.sessionID] = state
+        }
+        states = next
+        return events
     }
 }

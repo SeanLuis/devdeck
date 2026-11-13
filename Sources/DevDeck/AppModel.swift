@@ -87,7 +87,18 @@ final class AppModel {
     var agentScanning = false
     var accounts: AccountsReport = .empty
     var liveSessions: [LiveAgentSession] = []
+    var power: PowerStatus = .unknown
+    @ObservationIgnored var powerReadAt: Date = .distantPast
+    /// Session id → the last step its agent took.
+    var activities: [String: AgentActivity] = [:]
     var switchingAccount: String?
+    var budgets: [Budget] = []
+    var startingProjects: Set<String> = []
+    var profiles: [WorkProfile] = []
+    @ObservationIgnored var prices = PriceTable()
+    @ObservationIgnored var budgetFired: [String: String] = [:]
+    @ObservationIgnored var waitTracker = AgentWaitTracker()
+    @ObservationIgnored var suggestedSwitches: Set<String> = []
     var availableProviders: [AIProvider] = []
     var notificationStatus = "desconocido"
     var notificationsAllowed = false
@@ -178,6 +189,9 @@ final class AppModel {
 
     @ObservationIgnored let sampler = Sampler()
     @ObservationIgnored let usageScanner = AgentUsageScanner()
+    /// DevDeck's own account store (nil in the demo: it must never read a real login).
+    @ObservationIgnored var vault: AccountVault?
+    @ObservationIgnored var accountUsage = AccountUsageService(directory: nil)
     @ObservationIgnored let store: JSONStore
     @ObservationIgnored let ruleEngine = RuleEngine()
     @ObservationIgnored var loginEnv: [String: String] = ProcessInfo.processInfo.environment
@@ -217,6 +231,14 @@ final class AppModel {
         }
         settings.ai.envFilePath = nil
         history = store.load("conversations.json", as: [StoredConversation].self) ?? []
+        budgets = store.load("budgets.json", as: [Budget].self) ?? []
+        profiles = store.load("profiles.json", as: [WorkProfile].self) ?? []
+        if !demo {
+            prices = PriceTable.load(directory: store.directory)
+            vault = AccountVault(directory: store.directory)
+            accountUsage = AccountUsageService(directory: store.directory)
+        }
+        budgetFired = store.load("budget-state.json", as: [String: String].self) ?? [:]
         if let report = store.load("caches.json", as: CacheReport.self) {
             projectCaches = report.projects
             globalCaches = report.global
@@ -248,6 +270,14 @@ final class AppModel {
                 while !Task.isCancelled {
                     await self?.refreshAgentUsage()
                     try? await Task.sleep(nanoseconds: 90_000_000_000)
+                }
+            }
+            Task { [weak self] in
+                // Cheap (a few small files): often enough to tell when an agent stops and waits.
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    guard let self else { return }
+                    if !(self.gameMode && self.settings.game.lowPower) { await self.refreshLiveSessions() }
                 }
             }
             while !Task.isCancelled {
@@ -290,6 +320,14 @@ final class AppModel {
         agentUsage = data.usage
         accounts = data.accounts
         liveSessions = data.liveSessions
+        power.batteryPercent = 68; power.onAC = false; power.minutesLeft = 214; power.thermalLevel = 1
+        profiles = [WorkProfile(name: "Storefront", projects: data.snapshot.groups.compactMap { $0.kind == .project ? $0.projectRoot : nil }.prefix(2).map { $0 }),
+                    WorkProfile(name: "Docs", projects: data.projects.suffix(2).map(\.root))]
+        activities = ["demo-a": AgentActivity(tool: "Bash", detail: "Run the checkout test suite", at: Date()),
+                      "demo-b": AgentActivity(tool: nil, detail: "The export now streams rows instead of loading them all.", at: Date().addingTimeInterval(-1300))]
+        budgets = [Budget(kind: .project, target: data.usage.byProject(limit: 1).first?.project ?? "", period: .week, limit: 400_000_000),
+                   Budget(kind: .agent, target: "Codex", period: .day, limit: 10_000_000),
+                   Budget(kind: .account, target: "alex@example.net", period: .week, limit: 75)]
         discoveredProjects = data.projects
         projectCaches = data.projectCaches
         globalCaches = data.globalCaches
@@ -306,6 +344,11 @@ final class AppModel {
         snapshot = snap
         system = sys
         hasSample = true
+        if sys.time.timeIntervalSince(powerReadAt) >= 20 {
+            powerReadAt = sys.time
+            let status = PowerStatus.read()
+            if status != power { power = status }
+        }
 
         let cutoff = sys.time.addingTimeInterval(-settings.historyMinutes * 60)
         systemHistory.append(sys)
@@ -330,7 +373,7 @@ final class AppModel {
         // The agents panel shows who is busy right now: keep it fresh while it is on screen.
         if selectedSection == .agents { Task { await self.refreshLiveSessions() } }
         captureNewServices(snap)
-        for firing in ruleEngine.evaluate(rules: rules, snapshot: snap, system: sys, swap: swapReport) {
+        for firing in ruleEngine.evaluate(rules: rules, snapshot: snap, system: sys, swap: swapReport, power: power) {
             handle(firing)
         }
     }
@@ -691,6 +734,87 @@ final class AppModel {
         }
     }
 
+    func startPlan(root: String) -> ProjectStartPlan {
+        let services = snapshot.groups.first { $0.projectRoot == root }?.services ?? []
+        return ProjectStart.plan(root: root, recipes: recipes[root] ?? [], services: services, boundPorts: Set(snapshot.ports.map(\.port)),
+                                 containers: snapshot.containers, dockerAvailable: dockerPath != nil)
+    }
+
+    /// Brings up everything the project needs: its containers first (databases), then every remembered command that is not running.
+    func startProject(root: String) async {
+        let plan = startPlan(root: root)
+        guard !plan.isEmpty, !startingProjects.contains(root) else { return }
+        startingProjects.insert(root)
+        defer { startingProjects.remove(root) }
+        var failures: [String] = []
+        if let file = plan.composeFile, let docker = dockerPath {
+            show(L("Levantando los contenedores…"))
+            let result = await Shell.run(docker, ["compose", "-f", file, "up", "-d"], cwd: root, env: loginEnv, timeout: 180)
+            if !result.ok { failures.append("docker compose: " + String(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(140))) }
+            await refreshDocker()
+        }
+        var started = 0
+        for recipe in plan.recipes.reversed() {
+            do {
+                let (process, log) = try ProcessControl.launch(recipe, logDirectory: store.logsDirectory, fallbackEnv: loginEnv)
+                managedRuns.insert(ManagedRun(recipe: recipe, logURL: log, started: Date(), process: process), at: 0)
+                started += 1
+            } catch {
+                failures.append("\(recipe.label): \(error.localizedDescription)")
+            }
+        }
+        let name = (root as NSString).lastPathComponent
+        if failures.isEmpty {
+            show(L("%@ arrancado: %d comandos", name, started) + (plan.composeFile != nil ? " + Docker" : ""))
+        } else {
+            show(L("%@ arrancó a medias: %@", name, failures.joined(separator: "; ")))
+            pushAlert(AlertEvent(title: L("Arranque incompleto"), message: name + " — " + failures.joined(separator: "; "), severity: .warning))
+        }
+    }
+
+    // MARK: - Work profiles
+
+    func profilePlan(_ profile: WorkProfile) -> WorkProfilePlan {
+        WorkProfiles.plan(profile, running: runningProjectRoots, headlessRunning: snapshot.group(Classifier.headlessID) != nil)
+    }
+
+    /// Saves what is running now as a profile (or replaces the one with the same name).
+    func saveProfile(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let roots = runningProjectRoots.sorted()
+        if let index = profiles.firstIndex(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            profiles[index].projects = roots
+        } else {
+            profiles.append(WorkProfile(name: trimmed, projects: roots))
+        }
+        store.save(profiles, "profiles.json")
+        show(L("Perfil “%@” guardado con %d proyectos", trimmed, roots.count))
+    }
+
+    func updateProfile(_ profile: WorkProfile) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        profiles[index] = profile
+        store.save(profiles, "profiles.json")
+    }
+
+    func removeProfile(_ id: UUID) {
+        profiles.removeAll { $0.id == id }
+        store.save(profiles, "profiles.json")
+    }
+
+    /// Switches to a profile. Only ever called after the user saw the plan and confirmed it.
+    func apply(profile: WorkProfile) async {
+        let plan = profilePlan(profile)
+        for root in plan.close {
+            if let group = snapshot.group(forProject: root) { await kill(group: group) }
+        }
+        if plan.closeHeadless, let group = snapshot.group(Classifier.headlessID) { await kill(group: group) }
+        for root in plan.start { await startProject(root: root) }
+        show(L("Perfil “%@” aplicado", profile.name))
+        pushAlert(AlertEvent(title: L("Perfil aplicado"), message: profile.name, severity: .info))
+    }
+
     func remember(_ recipe: LaunchRecipe) {
         var list = recipes[recipe.projectRoot] ?? []
         list.removeAll { $0.id == recipe.id }
@@ -817,9 +941,11 @@ final class AppModel {
         agentScanning = true
         if agentUsage.installs.isEmpty { agentUsage.installs = await usageScanner.installs(env: loginEnv) }
         agentUsage = await usageScanner.scan(days: 7, env: loginEnv)
+        prices = PriceTable.load(directory: store.directory)
         agentScanning = false
         await refreshAccounts()
         await refreshLiveSessions()
+        checkBudgets()
     }
 
     /// `fast` forces Claude's small model: automatic analyses do not need a large one and should not make anyone wait.

@@ -5,11 +5,21 @@ import SwiftUI
 struct ProjectsView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
+    @State private var namingProfile = false
+    @State private var profileName = ""
 
     var body: some View {
         @Bindable var model = model
         HSplitView {
             List(selection: $model.selectedProjectRoot) {
+                Section(L("Perfiles")) {
+                    ForEach(model.profiles) { profile in ProfileRow(profile: profile) }
+                    Button { profileName = ""; namingProfile = true } label: {
+                        Label(L("Guardar lo que corre como perfil"), systemImage: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(running.isEmpty)
+                }
                 Section(L("En ejecución")) {
                     ForEach(filtered.filter { running.contains($0.root) }) { project in
                         ProjectRow(project: project).tag(project.root)
@@ -49,6 +59,13 @@ struct ProjectsView: View {
                 }
             }
             .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .alert(L("Nuevo perfil"), isPresented: $namingProfile) {
+            TextField(L("Nombre del perfil"), text: $profileName)
+            Button(L("Guardar")) { model.saveProfile(named: profileName) }
+            Button(L("Cancelar"), role: .cancel) {}
+        } message: {
+            Text(L("Recordará los %d proyectos que corren ahora. Al aplicarlo los arranca y, si quieres, cierra el resto.", running.count))
         }
     }
 
@@ -193,7 +210,18 @@ struct ProjectDetailView: View {
         if !saved.isEmpty || scripts != nil {
             Panel {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(running ? L("Arrancar otro servicio") : L("Arrancar")).font(.headline)
+                    let plan = model.startPlan(root: root)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(running ? L("Arrancar otro servicio") : L("Arrancar")).font(.headline)
+                        Spacer()
+                        if plan.steps > 1 || plan.composeFile != nil {
+                            if model.startingProjects.contains(root) { ProgressView().controlSize(.small) }
+                            Button { Task { await model.startProject(root: root) } } label: { Label(L("Arrancar todo"), systemImage: "play.circle.fill") }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(model.startingProjects.contains(root))
+                                .help(startAllHelp(plan))
+                        }
+                    }
                     if !saved.isEmpty {
                         Text(L("Comandos recordados (mismo comando, carpeta y entorno con que corrían)")).font(.caption).foregroundStyle(Theme.secondaryText)
                         ForEach(saved) { recipe in
@@ -220,6 +248,13 @@ struct ProjectDetailView: View {
                 .padding(6)
             }
         }
+    }
+
+    private func startAllHelp(_ plan: ProjectStartPlan) -> String {
+        var parts: [String] = []
+        if plan.composeFile != nil { parts.append("docker compose up -d") }
+        parts += plan.recipes.map(\.commandLine)
+        return parts.joined(separator: "\n")
     }
 
     @ViewBuilder
@@ -479,5 +514,57 @@ struct LogTail: View {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
+    }
+}
+
+/// A saved way of working. Applying it shows first what it will start and close.
+struct ProfileRow: View {
+    @Environment(AppModel.self) private var model
+    let profile: WorkProfile
+    @State private var confirming = false
+    @State private var applying = false
+
+    var body: some View {
+        let plan = model.profilePlan(profile)
+        HStack(spacing: 8) {
+            Image(systemName: "square.stack.3d.up").foregroundStyle(Theme.secondaryText).frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profile.name).lineLimit(1)
+                Text(verbatim: plan.isEmpty ? L("activo") : plural(profile.projects.count, "%d proyecto", "%d proyectos"))
+                    .font(.caption).foregroundStyle(plan.isEmpty ? Theme.success : Theme.secondaryText).lineLimit(1)
+            }
+            Spacer()
+            if applying { ProgressView().controlSize(.small) }
+            else if !plan.isEmpty {
+                Button { confirming = true } label: { Image(systemName: "play.fill") }.buttonStyle(.borderless).help(L("Aplicar perfil"))
+            }
+        }
+        .contextMenu {
+            Toggle(L("Cerrar los demás proyectos"), isOn: Binding(get: { profile.closeOtherProjects }, set: { value in
+                var changed = profile; changed.closeOtherProjects = value; model.updateProfile(changed)
+            }))
+            Toggle(L("Cerrar los navegadores headless"), isOn: Binding(get: { profile.closeHeadless }, set: { value in
+                var changed = profile; changed.closeHeadless = value; model.updateProfile(changed)
+            }))
+            Divider()
+            Button(L("Eliminar perfil"), role: .destructive) { model.removeProfile(profile.id) }
+        }
+        .confirmationDialog(L("¿Aplicar el perfil “%@”?", profile.name), isPresented: $confirming) {
+            Button(L("Aplicar perfil")) {
+                applying = true
+                Task { await model.apply(profile: profile); applying = false }
+            }
+        } message: {
+            Text(summary(plan))
+        }
+    }
+
+    private func summary(_ plan: WorkProfilePlan) -> String {
+        func names(_ roots: [String]) -> String { roots.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ") }
+        var lines: [String] = []
+        if !plan.start.isEmpty { lines.append(L("Arranca: %@", names(plan.start))) }
+        if !plan.close.isEmpty { lines.append(L("Cierra: %@", names(plan.close))) }
+        if plan.closeHeadless { lines.append(L("Cierra los navegadores headless")) }
+        return lines.joined(separator: "\n")
     }
 }
