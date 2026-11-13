@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+- The app is now signed with a Developer ID and notarized by Apple, and runs on Apple silicon and Intel
+- Real icons for apps and agents, in colour, grey or as symbols
+- The copilot section lists every conversation, and conversations are saved from the first moment
+- Reopening the launcher returns to the conversation in progress
+- Server-closed alerts only for real servers
+- Builds with Xcode 16
+
 ## 0.1.0
 
 First public release.
