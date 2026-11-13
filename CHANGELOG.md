@@ -2,6 +2,11 @@
 
 ## 0.1.2
 
+- Game mode: detects games and recommends it; pauses (never closes) what you choose, silences notices, hides the island, and shows the controller in the menu bar, Dock and app
+- Alerts now come with a recommendation and a button to act on it
+- New app icon
+- Claude Haiku is the default model for the copilot, and automatic analyses always use it
+
 - DevDeck checks for new versions once a day and tells you, with the release notes. Updating is one click: the download is verified to be signed and notarized before it replaces the app. You can skip a version or turn the check off
 - Settings → Updates, with "Check now"
 

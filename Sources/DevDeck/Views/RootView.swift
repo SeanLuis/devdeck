@@ -11,9 +11,12 @@ struct RootView: View {
             HStack(spacing: 0) {
                 Sidebar()
                     .frame(width: 220)
-                detail(for: section)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .id(section)
+                VStack(spacing: 0) {
+                    GameModeBanner()
+                    detail(for: section)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .id(section)
+                }
             }
             ToastOverlay()
         }
@@ -54,8 +57,9 @@ struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
-                AppGlyph(size: 24)
+                AppGlyph(size: 24, game: model.gameMode)
                 Text("DevDeck").font(.system(size: 15, weight: .semibold))
+                if model.gameMode { Pill(text: L("juego"), color: Theme.success) }
             }
             .padding(.horizontal, 16)
             .padding(.top, 40)

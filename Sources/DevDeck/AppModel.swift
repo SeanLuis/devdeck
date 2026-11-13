@@ -135,6 +135,14 @@ final class AppModel {
     var copilotDismissedAt: Int?
     /// The launcher should open straight on the conversation (set by the island).
     var paletteWantsChat = false
+    // Game mode
+    var gameMode = false
+    /// Name of the game that turned it on (nil when the user did).
+    var gameStartedBy: String?
+    var gamePausedGroups: [String] = []
+    @ObservationIgnored var pausedProcesses: [PausedProcess] = []
+    @ObservationIgnored var gameSuggestion: DetectedGame?
+    @ObservationIgnored var declinedGames: Set<String> = []
     // Updates
     var availableUpdate: AppRelease?
     var showUpdate = false
@@ -213,7 +221,9 @@ final class AppModel {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.tick()
-                try? await Task.sleep(nanoseconds: UInt64(max(1, self.settings.sampleInterval) * 1_000_000_000))
+                // Game mode leaves the CPU to the game: sample every 10 s.
+                let interval = self.gameMode && self.settings.game.lowPower ? max(10, self.settings.sampleInterval) : max(1, self.settings.sampleInterval)
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
         })
         tasks.append(Task { [weak self] in
@@ -234,6 +244,8 @@ final class AppModel {
             }
         })
         if !headless { refreshNotificationStatus() }
+        // If DevDeck quit while something was paused, let it continue.
+        if !headless, !(store.load("paused.json", as: [PausedProcess].self) ?? []).isEmpty { resumePaused() }
         if !headless {
             tasks.append(Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
@@ -294,7 +306,10 @@ final class AppModel {
         }
 
         swapReport = SwapAnalyzer.analyze(history: systemHistory, snapshot: snap)
-        if !headless { IslandController.shared.update(model: self) }
+        if !headless {
+            updateGameDetection()
+            IslandController.shared.update(model: self)
+        }
         // The agents panel shows who is busy right now: keep it fresh while it is on screen.
         if selectedSection == .agents { Task { await self.refreshLiveSessions() } }
         captureNewServices(snap)
@@ -465,7 +480,22 @@ final class AppModel {
             event.actionTaken = settings.ai.autopilot == .off ? nil : L("Diagnóstico IA en curso")
         }
         pushAlert(event)
-        notify(title: firing.rule.name, body: firing.message + (event.actionTaken.map { " — \($0)" } ?? ""))
+        // Not only a notice: a recommendation with a way to act on it.
+        let quiet = gameMode && settings.game.quietAlerts && firing.severity != .critical
+        if !headless, !quiet, firing.severity != .info, aiReady {
+            let question = L("Saltó la alerta “%@”: %@. ¿Qué la causa y qué me recomiendas hacer?", L(firing.rule.name), firing.message)
+            presentAlert(title: L(firing.rule.name), body: firing.message + (event.actionTaken.map { " — \($0)" } ?? ""), severity: firing.severity,
+                         actionLabel: L("Ver qué hacer"), seconds: 20,
+                         action: { [weak self] in
+                             guard let self else { return }
+                             self.startAgent(question)
+                             self.deckTab = DeckTab.copilot.rawValue
+                             self.deckOpen = true
+                         })
+            if Notifier.shared.systemAllowed { notify(title: firing.rule.name, body: firing.message, severity: firing.severity) }
+        } else {
+            notify(title: firing.rule.name, body: firing.message + (event.actionTaken.map { " — \($0)" } ?? ""), severity: firing.severity)
+        }
 
         let wantsAI = firing.rule.action == .askAI || (firing.severity == .critical && settings.ai.autoDiagnoseOnAlerts)
         if wantsAI, settings.ai.autopilot != .off, Date().timeIntervalSince(lastAutoAI) > settings.ai.autoDiagnoseEveryMinutes * 60 {
@@ -487,20 +517,25 @@ final class AppModel {
 
     func notify(title: String, body: String, severity: AlertSeverity = .warning, force: Bool = false) {
         guard !headless, settings.notificationsEnabled || force else { return }
+        if gameMode && settings.game.quietAlerts && severity != .critical && !force { return }
         Notifier.shared.post(title: title, body: body, severity: severity)
     }
 
     /// In-app alert: shown on the island (or a corner banner if the island is off).
-    func presentAlert(title: String, body: String, severity: AlertSeverity) {
-        guard settings.islandMode != "off" else {
+    /// `actionLabel` + `action` turn it into a recommendation the user can accept right there.
+    func presentAlert(title: String, body: String, severity: AlertSeverity, actionLabel: String? = nil, seconds: Double = 7,
+                      action: (() -> Void)? = nil, onDismiss: (() -> Void)? = nil) {
+        // Game mode: only what is critical interrupts.
+        if gameMode && settings.game.quietAlerts && severity != .critical { return }
+        guard settings.islandMode != "off" || actionLabel != nil else {
             BannerCenter.shared.show(title: title, body: body, severity: severity) { Notifier.shared.onOpen?(.rules) }
             return
         }
-        islandAlert = IslandAlert(title: title, message: body, severity: severity)
+        islandAlert = IslandAlert(title: title, message: body, severity: severity, actionLabel: actionLabel, action: action, onDismiss: onDismiss)
         IslandController.shared.update(model: self)
         islandTask?.cancel()
         islandTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 7_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             if !Task.isCancelled, let self {
                 self.islandAlert = nil
                 IslandController.shared.update(model: self)
@@ -761,6 +796,7 @@ final class AppModel {
 
     func refreshAgentUsage() async {
         guard !agentScanning else { return }
+        if gameMode && settings.game.lowPower { return }
         agentScanning = true
         if agentUsage.installs.isEmpty { agentUsage.installs = await usageScanner.installs(env: loginEnv) }
         agentUsage = await usageScanner.scan(days: 7, env: loginEnv)
@@ -769,8 +805,11 @@ final class AppModel {
         await refreshLiveSessions()
     }
 
-    func backend() throws -> AIBackend {
-        try AIEngine.backend(config: settings.ai, store: store, env: loginEnv)
+    /// `fast` forces Claude's small model: automatic analyses do not need a large one and should not make anyone wait.
+    func backend(fast: Bool = false) throws -> AIBackend {
+        var config = settings.ai
+        if fast, config.provider == .claudeCode { config.claudeModel = "haiku" }
+        return try AIEngine.backend(config: config, store: store, env: loginEnv)
     }
 
     func aiPayload() -> String {
@@ -844,7 +883,7 @@ final class AppModel {
         aiError = nil
         defer { aiBusy = false }
         do {
-            let result = try await backend().diagnose(snapshotJSON: aiPayload(), focus: focus)
+            let result = try await backend(fast: automatic).diagnose(snapshotJSON: aiPayload(), focus: focus)
             diagnosis = result
             diagnosisDate = Date()
             actionResults = [:]

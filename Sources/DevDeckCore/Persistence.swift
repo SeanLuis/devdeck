@@ -37,7 +37,8 @@ public struct AIConfig: Codable, Hashable, Sendable {
     public var provider: AIProvider = .claudeCode
     /// False until the user (or first-run detection) picks a provider.
     public var providerChosen = false
-    public var claudeModel: String = "default"
+    /// Haiku by default: reading a machine snapshot does not need a large model, and it answers in seconds.
+    public var claudeModel: String = "haiku"
     public var codexModel: String = "default"
     public var model: String = "gpt-6-luna"
     public var baseURL: String = "https://api.openai.com/v1"
@@ -91,6 +92,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var islandMode = "always"
     /// App and agent icons: "color" | "mono" (desaturated) | "symbols" (no logos).
     public var iconStyle = "color"
+    public var game = GameSettings()
     /// Look for new versions once a day (it only tells you; installing is always your click).
     public var checkForUpdates = true
     /// A version the user chose not to be told about again.
@@ -121,6 +123,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         iconStyle = try c.decodeIfPresent(String.self, forKey: .iconStyle) ?? d.iconStyle
         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? d.checkForUpdates
         skippedVersion = try c.decodeIfPresent(String.self, forKey: .skippedVersion)
+        game = try c.decodeIfPresent(GameSettings.self, forKey: .game) ?? d.game
         hotKeyCode = try c.decodeIfPresent(Int.self, forKey: .hotKeyCode) ?? d.hotKeyCode
         hotKeyModifiers = try c.decodeIfPresent(Int.self, forKey: .hotKeyModifiers) ?? d.hotKeyModifiers
         hotKeyLabel = try c.decodeIfPresent(String.self, forKey: .hotKeyLabel) ?? d.hotKeyLabel

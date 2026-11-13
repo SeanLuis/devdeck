@@ -234,20 +234,18 @@ struct Keycap: View {
 /// The DevDeck mark: a monochrome gauge.
 struct AppGlyph: View {
     var size: CGFloat = 28
+    /// Shows the game controller instead of the mark (game mode).
+    var game = false
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).fill(Theme.raised)
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).strokeBorder(Theme.ink(0.10), lineWidth: 1)
-            Circle()
-                .trim(from: 0.12, to: 0.88)
-                .stroke(Theme.ink(0.9), style: StrokeStyle(lineWidth: size * 0.075, lineCap: .round))
-                .rotationEffect(.degrees(90))
-                .frame(width: size * 0.56, height: size * 0.56)
-            Capsule().fill(Color.primary)
-                .frame(width: size * 0.05, height: size * 0.22)
-                .offset(y: -size * 0.09)
-                .rotationEffect(.degrees(38))
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).fill(Color.black)
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+            if game {
+                Image(systemName: "gamecontroller.fill").font(.system(size: size * 0.5)).foregroundStyle(.white)
+            } else {
+                LogoMark().fill(.white).frame(width: size * 0.47, height: size * 0.52).offset(x: size * 0.015)
+            }
         }
         .frame(width: size, height: size)
     }

@@ -351,3 +351,62 @@ struct UpdateTests {
         #expect(Updates.parse(Data("{}".utf8)) == nil)
     }
 }
+
+@Suite("Game mode")
+struct GameModeTests {
+    @Test func detectsGamesAndRespectsTheUsersLists() {
+        var settings = GameSettings()
+        func game(_ name: String, category: String? = nil, declares: Bool = false, path: String = "/Applications/X.app/Contents/MacOS/X") -> Bool {
+            GameDetector.looksLikeGame(name: name, category: category, declaresGameMode: declares, path: path, settings: settings)
+        }
+        #expect(game("Chess", category: "public.app-category.board-games"))
+        #expect(game("Hades", path: "/Users/me/Library/Application Support/Steam/steamapps/common/Hades/Hades.app/Contents/MacOS/Hades"))
+        #expect(game("Any", declares: true))
+        #expect(!game("Xcode", category: "public.app-category.developer-tools"))
+        settings.extraGames = ["Emulator"]
+        settings.notGames = ["chess"]
+        #expect(game("Emulator"))
+        #expect(!game("Chess", category: "public.app-category.board-games"))
+    }
+
+    private func group(_ id: String, _ kind: GroupKind, pids: [Int32], cpu: Double = 0, services: [ServiceInfo] = []) -> ProcessGroup {
+        ProcessGroup(id: id, kind: kind, name: id, detail: "", projectRoot: nil, pids: pids, memoryBytes: 1, cpuPercent: cpu, ports: [],
+                     services: services, containers: [], frameworks: [], origins: [:])
+    }
+
+    @Test func choosesWhatToPause() {
+        let groups = [group("headless", .headless, pids: [1]), group("agent:busy", .agent, pids: [2], cpu: 40), group("agent:idle", .agent, pids: [3]),
+                      group("docker", .docker, pids: [4]), group("system", .system, pids: [5]), group("app:Game", .app, pids: [6]),
+                      group("agent:front", .agent, pids: [7])]
+        var settings = GameSettings()
+        #expect(ProcessPauser.groupsToPause(groups, settings: settings, protected: []).map(\.id) == ["headless"])
+        settings.pauseIdleAgents = true
+        settings.pauseDocker = true
+        #expect(ProcessPauser.groupsToPause(groups, settings: settings, protected: [7]).map(\.id) == ["headless", "agent:idle", "docker"])
+        settings.neverPause = ["docker"]
+        #expect(!ProcessPauser.groupsToPause(groups, settings: settings, protected: []).map(\.id).contains("docker"))
+    }
+
+    @Test func pausesAndResumesARealProcess() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        defer { process.terminate() }
+        let pid = process.processIdentifier
+        func state() -> String {
+            Shell.runSync("/bin/ps", ["-o", "state=", "-p", "\(pid)"]).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let record = ProcessRecord(pid: pid, ppid: getpid(), uid: getuid(), name: "sleep", executablePath: "/bin/sleep", args: ["sleep"], cwd: nil,
+                                   startTime: Date(), memoryBytes: 1, cpuTimeNs: 0, cpuPercent: 0, isMine: true)
+        let paused = ProcessPauser.pause(group("x", .headless, pids: [pid]), processes: [pid: record])
+        #expect(paused.count == 1)
+        usleep(200_000)
+        #expect(state().hasPrefix("T"))
+        // A pid that now belongs to a different process (other start time) is left alone.
+        #expect(ProcessPauser.resume(paused, liveStarts: [pid: Date().addingTimeInterval(-500)]) == 0)
+        #expect(ProcessPauser.resume(paused, liveStarts: [pid: record.startTime]) == 1)
+        usleep(200_000)
+        #expect(!state().hasPrefix("T"))
+    }
+}

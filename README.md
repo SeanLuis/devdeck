@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" alt="DevDeck" width="112">
+
 # DevDeck
 
 **Where is all this load coming from?**
@@ -40,7 +42,7 @@ DevDeck does. It is built for the way developers work now: several dev servers, 
 | **Projects** | Running and discovered projects: services, ports, memory over time, containers, caches, `package.json` scripts, remembered commands and logs. |
 | **Caches and disk** | `.next`, `node_modules`, `.turbo`, `target`, `.venv`… per project, plus global caches (npm, pnpm, uv, Homebrew, Xcode, Playwright…), each cleaned the right way. |
 | **Tools** | Cleanup and maintenance commands for Docker, npm, pnpm, bun, yarn, uv, pip, Gradle, Homebrew and Xcode, only for what you have installed. |
-| **Limits and alerts** | Rules with "sustained for N seconds" and cooldown: notify, kill, restart, or ask the AI for a diagnosis. |
+| **Limits and alerts** | Rules with "sustained for N seconds" and cooldown: notify, kill, restart, or ask the AI for a diagnosis. Alerts come with a recommendation: one click asks the copilot what to do. |
 
 <img src="docs/screenshots/projects.png" alt="Projects" width="900">
 
@@ -72,6 +74,18 @@ Pick the board it opens on, show it always, only when something needs attention,
 <img src="docs/screenshots/island-copilot.png" alt="Island: copilot board" width="420">
 </p>
 
+### Game mode
+
+When a game starts, DevDeck recommends game mode (or turns it on by itself, if you prefer). While it is on:
+
+- What you chose is **paused, not closed**: headless browsers, idle AI agents, dev servers, Docker. An agent that is working is never paused. Everything continues exactly where it was when you leave.
+- Notices are silenced (critical alerts still get through), the island hides, and DevDeck itself drops to low power.
+- The menu bar, the Dock and the app show the controller, so you always know it is on.
+
+Games are detected by app category, by store folder (Steam, Epic, GOG…) or from your own list.
+
+<img src="docs/screenshots/game-mode.png" alt="Game mode" width="900">
+
 ### An AI copilot that asks before it acts
 
 Press **⌥⌘D** from any app for a Raycast-style launcher: search commands, projects and ports, or just ask.
@@ -94,7 +108,7 @@ The copilot works as a turn-based agent. It shows its plan and the read-only too
 | Reduce Docker's RAM | Changes the size of Docker Desktop's VM and restarts it. |
 | Run a tool | Any recipe from Tools; the card shows the exact command and its output. |
 
-It runs on **your own agent login**: Claude Code or Codex, with no API key (the CLI runs with no tools, no MCP servers and no saved history), or the OpenAI API with your key.
+It runs on **your own agent login**: Claude Code (Haiku by default, so answers take seconds) or Codex, with no API key (the CLI runs with no tools, no MCP servers and no saved history), or the OpenAI API with your key.
 
 ### Restart without losing anything
 

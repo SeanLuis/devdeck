@@ -29,9 +29,9 @@ struct SettingsView: View {
                     Divider().overlay(Theme.ink(0.08))
                     switch model.settings.ai.provider {
                     case .claudeCode:
-                        row(L("Modelo de Claude"), L("“default” usa el de tu configuración de Claude Code")) {
+                        row(L("Modelo de Claude"), L("Haiku responde en segundos y basta para leer el estado de la Mac. Los análisis automáticos siempre usan Haiku")) {
                             Picker("", selection: $model.settings.ai.claudeModel) {
-                                ForEach(["default", "opus", "sonnet", "haiku"], id: \.self) { Text($0).tag($0) }
+                                ForEach(["haiku", "sonnet", "opus", "default"], id: \.self) { Text($0).tag($0) }
                             }
                             .labelsHidden().frame(width: 240)
                         }
@@ -165,6 +165,8 @@ struct SettingsView: View {
                         .onChange(of: model.settings.deckTab) { model.deckTab = model.settings.deckTab }
                     }
                 }
+
+                GameSettingsPanel()
 
                 Panel(L("Actualizaciones"), symbol: "arrow.down.circle") {
                     row(L("Versión %@", model.appVersion), updateStatus) {

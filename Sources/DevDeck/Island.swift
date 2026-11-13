@@ -8,6 +8,12 @@ struct IslandAlert: Equatable {
     let title: String
     let message: String
     let severity: AlertSeverity
+    /// What DevDeck recommends doing about it, as a button.
+    var actionLabel: String?
+    var action: (() -> Void)?
+    var onDismiss: (() -> Void)?
+
+    static func == (a: IslandAlert, b: IslandAlert) -> Bool { a.id == b.id }
 }
 
 /// A live status pill at the top-centre of the screen (Dynamic-Island style). Compact by default; it expands with
@@ -23,6 +29,10 @@ final class IslandController {
     /// Whether the island should be on screen right now.
     func wanted(_ model: AppModel) -> Bool {
         guard !model.headless else { return false }
+        // Game mode: out of the way, except for something critical.
+        if model.gameMode && model.settings.game.hideIsland { return model.islandAlert?.severity == .critical }
+        // A recommendation waiting for an answer is shown even when the island is normally off.
+        if model.islandAlert?.actionLabel != nil { return true }
         switch model.settings.islandMode {
         case "always": return true
         case "auto": return model.islandAlert != nil || model.copilotOnIsland || model.deckOpen
@@ -126,6 +136,7 @@ struct IslandView: View {
     private func toggleDeck() {
         if model.islandAlert != nil { model.islandAlert = nil }
         if !model.deckOpen {
+            if model.islandAlert != nil { model.islandAlert = nil }
             // Open on whatever needs attention; otherwise on the user's default board.
             model.deckTab = model.copilotOnIsland ? DeckTab.copilot.rawValue : model.settings.deckTab
             Task { await model.refreshLiveSessions() }
@@ -196,16 +207,24 @@ struct IslandView: View {
                 .foregroundStyle(Color.severity(alert.severity))
             VStack(alignment: .leading, spacing: 2) {
                 Text(alert.title).font(.system(size: 13, weight: .semibold))
-                Text(alert.message).font(.system(size: 12)).opacity(0.7).lineLimit(3)
+                Text(alert.message).font(.system(size: 12)).opacity(0.7).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                if let label = alert.actionLabel {
+                    HStack(spacing: 8) {
+                        Button(label) { model.islandAlert = nil; alert.action?(); IslandController.shared.update(model: model) }.buttonStyle(.borderedProminent)
+                        Button(L("Ahora no")) { model.islandAlert = nil; alert.onDismiss?(); IslandController.shared.update(model: model) }.buttonStyle(.bordered)
+                    }
+                    .controlSize(.small)
+                    .padding(.top, 5)
+                }
             }
             Spacer(minLength: 0)
-            Button { model.islandAlert = nil; IslandController.shared.update(model: model) } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
+            Button { model.islandAlert = nil; alert.onDismiss?(); IslandController.shared.update(model: model) } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
                 .buttonStyle(.plain).opacity(0.6).help(L("Cerrar"))
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
         .contentShape(Rectangle())
-        .onTapGesture { model.islandAlert = nil; Notifier.shared.onOpen?(.rules) }
+        .onTapGesture { if alert.actionLabel == nil { model.islandAlert = nil; Notifier.shared.onOpen?(.rules) } }
     }
 
     private var peek: some View {

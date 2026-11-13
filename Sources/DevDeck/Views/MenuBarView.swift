@@ -7,7 +7,8 @@ struct MenuBarLabel: View {
     var body: some View {
         let s = model.system
         HStack(spacing: 3) {
-            Image(systemName: model.swapReport.thrashing || s.pressure >= 4 ? "exclamationmark.triangle.fill"
+            Image(systemName: model.gameMode ? "gamecontroller.fill"
+                  : model.swapReport.thrashing || s.pressure >= 4 ? "exclamationmark.triangle.fill"
                   : s.pressure >= 2 ? "memorychip.fill" : "memorychip")
             Text(model.hasSample ? "\(Int(s.memPercent))%" : "—").monospacedDigit()
         }
@@ -112,6 +113,10 @@ struct MenuBarView: View {
                     .buttonStyle(.bordered)
                     .keyboardShortcut("o")
                 Menu {
+                    Button(model.gameMode ? L("Salir del modo juego") : L("Activar modo juego")) {
+                        if model.gameMode { model.exitGameMode() } else { model.enterGameMode() }
+                    }
+                    Divider()
                     Button(L("Memoria y swap")) { open(.memory) }
                     Button(L("Ajustes")) { open(.settings) }
                     Divider()
@@ -130,8 +135,8 @@ struct MenuBarView: View {
 
     private func header(_ s: SystemSample) -> some View {
         HStack(spacing: 10) {
-            AppGlyph(size: 26)
-            Text("DevDeck").font(.system(size: 14, weight: .semibold))
+            AppGlyph(size: 26, game: model.gameMode)
+            Text(model.gameMode ? L("Modo juego") : "DevDeck").font(.system(size: 14, weight: .semibold))
             Spacer()
             HStack(spacing: 6) {
                 Circle().fill(Color.pressure(s.pressure)).frame(width: 7, height: 7).shadow(color: .pressure(s.pressure), radius: 4)

@@ -299,6 +299,11 @@ struct CommandPaletteView: View {
                         subtitle: "Swap \(Fmt.bytes(model.system.swapUsed)) · \(swapSummary)", accessory: L("IA"), primaryLabel: L("Analizar"),
                         run: { startDiagnosis(L("Analiza el swap a fondo: qué lo llena, si está activo o dormido, y qué cerrar para bajarlo.")) }),
         ]
+        commands.append(PaletteItem(id: "game", section: L("Comandos"), icon: "gamecontroller", tint: Theme.tint,
+                                    title: model.gameMode ? L("Salir del modo juego") : L("Activar modo juego"),
+                                    subtitle: model.gameMode ? L("Reanuda lo que estaba en pausa") : model.gamePlanSummary(),
+                                    primaryLabel: model.gameMode ? L("Salir") : L("Activar"),
+                                    run: { if model.gameMode { model.exitGameMode() } else { model.enterGameMode() } }))
         let headless = model.snapshot.headlessBrowserCount
         if headless > 0, let group = model.snapshot.group(Classifier.headlessID) {
             commands.append(PaletteItem(id: "headless", section: L("Comandos"), icon: "rectangle.stack.badge.minus", tint: .orange,

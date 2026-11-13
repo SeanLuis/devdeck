@@ -67,6 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { PaletteController.shared.model?.refreshNotificationStatus() }
     }
 
+    /// Nothing stays frozen when DevDeck quits.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { _ = PaletteController.shared.model?.resumePaused() }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
@@ -343,33 +348,7 @@ enum CLI {
 @MainActor
 enum IconRenderer {
     static func render(to path: String) {
-        let view = ZStack {
-            RoundedRectangle(cornerRadius: 230, style: .continuous)
-                .fill(LinearGradient(colors: [Color(red: 0.10, green: 0.12, blue: 0.22), Color(red: 0.20, green: 0.10, blue: 0.38)],
-                                     startPoint: .top, endPoint: .bottom))
-            // gauge arc: green (bottom-left) → red (bottom-right)
-            Circle()
-                .trim(from: 0.12, to: 0.88)
-                .stroke(AngularGradient(colors: [.green, .yellow, .orange, .red], center: .center,
-                                        startAngle: .degrees(43.2), endAngle: .degrees(316.8)),
-                        style: StrokeStyle(lineWidth: 62, lineCap: .round))
-                .rotationEffect(.degrees(90))
-                .frame(width: 600, height: 600)
-            // needle
-            Capsule()
-                .fill(.white)
-                .frame(width: 34, height: 250)
-                .offset(y: -110)
-                .rotationEffect(.degrees(38))
-            Circle().fill(.white).frame(width: 96, height: 96)
-            Circle().fill(Color(red: 0.16, green: 0.11, blue: 0.30)).frame(width: 36, height: 36)
-            Text("dev")
-                .font(.system(size: 120, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white.opacity(0.92))
-                .offset(y: 285)
-        }
-        .frame(width: 1024, height: 1024)
-        .padding(0)
+        let view = LogoArt()
         let renderer = ImageRenderer(content: view.frame(width: 1024, height: 1024))
         renderer.scale = 1
         guard let image = renderer.cgImage else { return }
