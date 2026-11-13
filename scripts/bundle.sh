@@ -1,10 +1,19 @@
 #!/bin/zsh
-# Builds DevDeck.app (release), signs it ad-hoc and installs it to ~/Applications.
+# Builds DevDeck.app (release), signs it and installs it to ~/Applications.
+#
+# Options (environment variables):
+#   SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"   sign for distribution (hardened runtime + timestamp).
+#                                                             Without it the app is signed ad-hoc, for local use.
+#   UNIVERSAL=1      build for Apple silicon and Intel
+#   SKIP_INSTALL=1   leave the app in build/ and do not copy it to ~/Applications
+#   APP_VERSION=1.2.3
 set -euo pipefail
 cd "${0:A:h}/.."
 APP=build/DevDeck.app
-swift build -c release -debug-info-format none
-BIN=$(swift build -c release -debug-info-format none --show-bin-path)/DevDeck
+FLAGS=(-c release -debug-info-format none)
+if [[ -n "${UNIVERSAL:-}" ]]; then FLAGS+=(--arch arm64 --arch x86_64); fi
+swift build "${FLAGS[@]}"
+BIN=$(swift build "${FLAGS[@]}" --show-bin-path)/DevDeck
 
 rm -rf "$APP" build/AppIcon.iconset
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build/AppIcon.iconset
@@ -30,7 +39,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>DevDeck</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>${APP_VERSION:-0.1.0}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
@@ -40,7 +49,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP"
+if [[ -n "${SIGN_IDENTITY:-}" ]]; then
+  # Distribution: Developer ID, hardened runtime and a secure timestamp, as notarization requires.
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
+else
+  codesign --force --deep --sign - "$APP"
+fi
+codesign --verify --strict "$APP"
+if [[ -n "${SKIP_INSTALL:-}" ]]; then
+  echo "Built: $APP"
+  exit 0
+fi
 mkdir -p "$HOME/Applications"
 rm -rf "$HOME/Applications/DevDeck.app"
 cp -R "$APP" "$HOME/Applications/DevDeck.app"

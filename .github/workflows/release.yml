@@ -1,0 +1,83 @@
+name: Release
+
+# Builds DevDeck.app for Apple silicon and Intel, signs it with a Developer ID certificate, has Apple notarize it,
+# staples the ticket and attaches DevDeck.zip to the GitHub release.
+# Without the signing secrets it still builds, but the zip is ad-hoc signed and not notarized.
+# Setup: docs/RELEASING.md
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach the app to (e.g. v0.1.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      HAS_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Test
+        run: swift test
+
+      - name: Import the Developer ID certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm "$RUNNER_TEMP/cert.p12"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          if [ -z "$IDENTITY" ]; then echo "No Developer ID Application identity in the certificate"; exit 1; fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build the app
+        run: |
+          export APP_VERSION="${TAG#v}"
+          UNIVERSAL=1 SKIP_INSTALL=1 ./scripts/bundle.sh
+          ditto -c -k --keepParent build/DevDeck.app build/DevDeck.zip
+
+      - name: Notarize and staple
+        if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          echo "$API_KEY" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool submit build/DevDeck.zip --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER_ID" --wait --output-format json | tee "$RUNNER_TEMP/notary.json"
+          rm "$RUNNER_TEMP/AuthKey.p8"
+          grep -q '"status":"Accepted"' "$RUNNER_TEMP/notary.json"
+          xcrun stapler staple build/DevDeck.app
+          spctl --assess --type execute --verbose build/DevDeck.app
+          rm build/DevDeck.zip
+          ditto -c -k --keepParent build/DevDeck.app build/DevDeck.zip
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shasum -a 256 build/DevDeck.zip
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --title "DevDeck ${TAG#v}" --generate-notes
+          gh release upload "$TAG" build/DevDeck.zip --clobber

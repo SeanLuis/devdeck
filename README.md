@@ -108,7 +108,7 @@ When DevDeck sees a dev server it remembers its command, folder and environment.
    xattr -dr com.apple.quarantine /Applications/DevDeck.app
    ```
 
-Requires macOS 14 or later. The release build is for Apple silicon; on Intel, build from source.
+Requires macOS 14 or later.
 
 ## Build from source
 
@@ -165,12 +165,11 @@ swift test
 
 Strings are written in Spanish inside `L("…")`; translations live in `L10n+English.swift` and `L10n+Portuguese.swift`, keyed by the Spanish text. A test fails if one is missing.
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Releases are signed and notarized by a workflow: see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Roadmap
 
-- Notarized builds and automatic updates
-- Intel build in releases
+- Automatic updates
 - Token readers for more agents (Cursor, Aider, Amp)
 - Per-project token budgets and alerts
 - More languages
