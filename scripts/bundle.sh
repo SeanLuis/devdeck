@@ -29,7 +29,17 @@ iconutil -c icns build/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.icns"
 
 VERSION=$(git describe --tags --always 2>/dev/null || echo 0.1.0)
 # Version shown in the app: APP_VERSION, or the latest git tag, so a local build does not look older than the release.
-: "${APP_VERSION:=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')}"
+# A build with commits after the last tag is ahead of that release: 0.1.2 + 3 commits → 0.1.3-dev,
+# so the updater never offers a release that is older than what is installed.
+if [[ -z "${APP_VERSION:-}" ]]; then
+  LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+  if [[ -n "$LAST_TAG" ]]; then
+    APP_VERSION="${LAST_TAG#v}"
+    if [[ "$(git rev-list "$LAST_TAG"..HEAD --count 2>/dev/null)" != "0" ]]; then
+      APP_VERSION="${APP_VERSION%.*}.$(( ${APP_VERSION##*.} + 1 ))-dev"
+    fi
+  fi
+fi
 : "${APP_VERSION:=0.1.0}"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
