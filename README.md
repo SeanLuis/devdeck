@@ -4,9 +4,9 @@
 
 # DevDeck
 
-**Where is all this load coming from?**
+**A system monitor that knows what you are working on.**
 
-A native macOS dashboard for developers: it attributes every gigabyte of RAM, every port and every swap spike to the project, AI agent, container or app behind it, and lets you act in one click.
+DevDeck is a native macOS app that attributes memory, swap, CPU and listening ports to the project, AI coding agent, container or application responsible, and lets you act on it.
 
 [![CI](https://github.com/SeanLuis/devdeck/actions/workflows/ci.yml/badge.svg)](https://github.com/SeanLuis/devdeck/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
@@ -21,20 +21,21 @@ A native macOS dashboard for developers: it attributes every gigabyte of RAM, ev
 
 ## Why
 
-Activity Monitor tells you that `node` uses 1.8 GB. It does not tell you that it is the `next dev` of one project, that the 14 headless Chromes were left behind by a coding agent, or that Docker reserves 4 GB for two containers that use 500 MB.
+A process list shows that `node` uses 1.8 GB. It does not show that the process is the dev server of a particular project, that 14 headless browsers were left behind by a coding agent, or that the container VM reserves 4 GB for two containers using 500 MB.
 
-DevDeck does. It is built for the way developers work now: several dev servers, a container VM, and a few AI agents running at once on one laptop.
+DevDeck makes that attribution. It is designed for a typical development machine today: several dev servers, a container VM and one or more AI coding agents running at the same time.
 
-- **Native and light.** SwiftUI, no Electron, no dependencies. About 90 MB of memory.
+- **Native.** Written in SwiftUI with no third-party dependencies. Uses about 90 MB of memory.
 - **Local.** Everything is read from your Mac. Nothing leaves it unless you ask the copilot something.
-- **Careful.** It never touches system processes, and every action the AI proposes waits for your approval.
+- **Conservative.** System processes are never touched, and every action proposed by the AI requires your approval.
 
 ## Features
 
-### See where the load comes from
+### System and projects
 
 | | |
 |---|---|
+| **History** | A summary per minute, kept for seven days: memory and swap over time, who was using memory at any given minute, the moments memory reached its limit and what grew just before, and processes whose memory only grows (likely leaks), with a recommendation to restart them. |
 | **Overview** | RAM, memory pressure, swap, CPU and disk, with memory stacked **by source**: project, AI agent, browser, Docker, app. |
 | **Memory and swap** | Whether swap is dormant (harmless) or active (slowing you down), growth per minute, compressed memory, thrashing detection, and who has memory out of RAM. **Free swap** lets you pick what to close, restart or reopen to get it back. |
 | **Load by source** | Every process attributed to whoever launched it, and named for what it does: the 40 identical helpers of a browser become "Tab or window × 38", "GPU", "Network", "Extension"… MCP servers count for the agent that started them. Headless browsers show who launched them. |
@@ -44,9 +45,11 @@ DevDeck does. It is built for the way developers work now: several dev servers, 
 | **Tools** | Cleanup and maintenance commands for Docker, npm, pnpm, bun, yarn, uv, pip, Gradle, Homebrew and Xcode, only for what you have installed. |
 | **Limits and alerts** | Rules with "sustained for N seconds" and cooldown: notify, kill, restart, or ask the AI for a diagnosis. Alerts come with a recommendation: one click asks the copilot what to do. |
 
+<img src="docs/screenshots/history.png" alt="History" width="900">
+
 <img src="docs/screenshots/projects.png" alt="Projects" width="900">
 
-### Keep an eye on your AI agents
+### AI coding agents
 
 - **Working now**: every open session with its folder, whether it is working or idle, RAM, CPU, tokens, and the **subagents** it spawned.
 - **Accounts and limits**: your Claude Code accounts with their 5-hour, 7-day and per-model usage, and account switching with confirmation (through [claude-swap](https://github.com/realiti4/claude-swap) when installed). Codex account and plan.
@@ -86,9 +89,9 @@ Games are detected by app category, by store folder (Steam, Epic, GOG…) or fro
 
 <img src="docs/screenshots/game-mode.png" alt="Game mode" width="900">
 
-### An AI copilot that asks before it acts
+### AI copilot with explicit approval
 
-Press **⌥⌘D** from any app for a Raycast-style launcher: search commands, projects and ports, or just ask.
+Press **⌥⌘D** from any application to open the launcher: search commands, projects and ports, or ask a question.
 
 The copilot works as a turn-based agent. It shows its plan and the read-only tools it uses, then answers. Anything that changes your machine comes as a card with **Approve / Reject**, and you can decide right from the island without switching windows.
 
@@ -110,7 +113,7 @@ The copilot works as a turn-based agent. It shows its plan and the read-only too
 
 It runs on **your own agent login**: Claude Code (Sonnet for your questions, Haiku for automatic analyses; both configurable) or Codex, with no API key (the CLI runs with no tools, no MCP servers and no saved history), or the OpenAI API with your key.
 
-### Restart without losing anything
+### Restarting services
 
 When DevDeck sees a dev server it remembers its command, folder and environment. Restart means an orderly SIGTERM to the process tree, waiting for the port to be free, and launching it exactly as it was. "Clean `.next` and restart" does the same with the cache deleted in between.
 

@@ -462,3 +462,47 @@ struct OwnUsageTests {
         #expect(again.summary(lastDays: 7, now: now).total.input == 200)
     }
 }
+
+@Suite("Timeline")
+struct TimelineTests {
+    private func point(_ minute: Int, mem: Double = 60, swap: Int = 1000, pressure: Int = 1, sources: [(String, Int)]) -> TimelinePoint {
+        TimelinePoint(minute: minute, memPercent: mem, memUsedMB: 20_000, swapMB: swap, cpu: 10, pressure: pressure,
+                      sources: sources.map { TimelinePoint.Source(id: $0.0, name: $0.0, kind: "project", memMB: $0.1, cpu: 1) })
+    }
+
+    @Test func storesAndLoadsARange() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-timeline-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = TimelineStore(directory: dir)
+        let base = Int(Date().timeIntervalSince1970 / 60) - 100
+        for offset in 0..<100 { store.append(point(base + offset, sources: [("a", offset)])) }
+        let all = store.load(from: Date().addingTimeInterval(-3 * 3600))
+        #expect(all.count == 100)
+        #expect(all.first?.minute == base && all.last?.sources.first?.memMB == 99)
+        let recent = TimelineStore(directory: dir).load(from: Date(timeIntervalSince1970: Double(base + 90) * 60))
+        #expect(recent.count == 10)
+    }
+
+    @Test func findsWhatOnlyGrows() {
+        var points: [TimelinePoint] = []
+        for minute in 0..<180 {
+            points.append(point(minute, sources: [("leaky", 800 + minute * 8), ("busy", 900 + (minute % 20) * 60), ("flat", 1500)]))
+        }
+        let leaks = TimelineAnalysis.leaks(points)
+        #expect(leaks.map(\.id) == ["leaky"])
+        #expect((leaks.first?.growthMB ?? 0) > 800)
+        #expect(TimelineAnalysis.leaks(Array(points.prefix(20))).isEmpty)
+    }
+
+    @Test func marksMomentsAndNamesTheCulprit() {
+        var points: [TimelinePoint] = []
+        for minute in 0..<120 {
+            let spike = minute >= 60 && minute < 66
+            points.append(point(minute, mem: spike ? 94 : 60, sources: [("builder", spike ? 6000 : 900), ("other", 1000)]))
+        }
+        let moments = TimelineAnalysis.moments(points)
+        #expect(moments.count == 1)
+        #expect(moments.first?.minute == 60 && moments.first?.culprit == "builder")
+        #expect(TimelineAnalysis.thin(points, to: 30).count == 30)
+    }
+}

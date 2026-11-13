@@ -34,7 +34,7 @@ struct CacheReport: Codable {
 }
 
 enum SidebarSection: String, CaseIterable, Identifiable {
-    case overview, memory, ports, projects, agents, load, caches, toolkit, rules, copilot, settings
+    case overview, memory, history, ports, projects, agents, load, caches, toolkit, rules, copilot, settings
 
     var id: String { rawValue }
 
@@ -42,6 +42,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return L("Resumen")
         case .memory: return L("Memoria y swap")
+        case .history: return L("Historial")
         case .ports: return L("Puertos")
         case .projects: return L("Proyectos")
         case .agents: return L("Agentes de IA")
@@ -58,6 +59,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return "gauge.with.dots.needle.50percent"
         case .memory: return "memorychip"
+        case .history: return "clock.arrow.circlepath"
         case .ports: return "point.3.connected.trianglepath.dotted"
         case .projects: return "folder"
         case .agents: return "cpu"
@@ -139,6 +141,11 @@ final class AppModel {
     var paletteVisible = false
     @ObservationIgnored var tickCount = 0
     var swapRelieving = false
+    // Timeline: the last hours in memory, a week on disk.
+    var timeline: [TimelinePoint] = []
+    var leaks: [MemoryLeak] = []
+    @ObservationIgnored var announcedLeaks: Set<String> = []
+    @ObservationIgnored lazy var timelineStore = TimelineStore(directory: store.directory.appendingPathComponent("timeline", isDirectory: true))
     // Game mode
     var gameMode = false
     /// Name of the game that turned it on (nil when the user did).
@@ -248,7 +255,7 @@ final class AppModel {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
             }
         })
-        if !headless { refreshNotificationStatus() }
+        if !headless { refreshNotificationStatus(); loadRecentTimeline() }
         // If DevDeck quit while something was paused, let it continue.
         if !headless, !(store.load("paused.json", as: [PausedProcess].self) ?? []).isEmpty { resumePaused() }
         if !headless {
@@ -278,6 +285,8 @@ final class AppModel {
             }
         }
         swapReport = SwapAnalyzer.analyze(history: systemHistory, snapshot: snapshot)
+        timeline = data.timeline
+        leaks = TimelineAnalysis.leaks(Array(data.timeline.suffix(180)))
         agentUsage = data.usage
         accounts = data.accounts
         liveSessions = data.liveSessions
@@ -312,6 +321,7 @@ final class AppModel {
 
         swapReport = SwapAnalyzer.analyze(history: systemHistory, snapshot: snap)
         tickCount += 1
+        recordTimeline()
         if !headless {
             // Looking for a game means asking the system for every running app: every few samples is plenty.
             if gameMode || tickCount % 5 == 1 { updateGameDetection() }

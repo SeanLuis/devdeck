@@ -13,6 +13,7 @@ public struct DemoData: Sendable {
     public var projectCaches: [String: [CacheEntry]]
     public var globalCaches: [CacheEntry]
     public var alerts: [AlertEvent]
+    public var timeline: [TimelinePoint] = []
 
     static let gb: UInt64 = 1 << 30
     static let mb: UInt64 = 1 << 20
@@ -259,6 +260,24 @@ public struct DemoData: Sendable {
                        message: L("%@ (%@) se cerró y no fue DevDeck. Puedes volver a arrancarlo desde Proyectos.", "astro dev", "docs-site"), severity: .info),
             AlertEvent(time: now.addingTimeInterval(-4100), title: L("Un proyecto usa > 6 GB"), message: "storefront: 6.3 GB", severity: .warning),
         ]
+        // Six hours of history: a dev server that leaks, and one moment at the limit when a build ran.
+        let nowMinute = Int(now.timeIntervalSince1970 / 60)
+        data.timeline = (0..<360).map { index in
+            let minute = nowMinute - 359 + index
+            let build = index >= 170 && index < 182
+            let leak = 700 + index * 5
+            let wave = sin(Double(index) / 14) * 2.5
+            let sources = [
+                TimelinePoint.Source(id: Classifier.dockerID, name: "Docker", kind: "docker", memMB: 3900, cpu: 5),
+                TimelinePoint.Source(id: "app:Google Chrome", name: "Google Chrome", kind: "browser", memMB: 3100 + Int(wave * 40), cpu: 8),
+                TimelinePoint.Source(id: "project:\(code)/storefront", name: "storefront", kind: "project", memMB: leak, cpu: 6),
+                TimelinePoint.Source(id: "app:Xcode", name: "Xcode", kind: "app", memMB: build ? 7600 : 2150, cpu: build ? 380 : 2),
+                TimelinePoint.Source(id: "agent:Claude Code", name: "Claude Code", kind: "agent", memMB: 1500 + (index % 60) * 6, cpu: 20),
+                TimelinePoint.Source(id: "project:\(code)/billing-api", name: "billing-api", kind: "project", memMB: 940, cpu: 2),
+            ].sorted { $0.memMB > $1.memMB }
+            return TimelinePoint(minute: minute, memPercent: (build ? 93 : 62 + Double(index) / 36 + wave).rounded(), memUsedMB: build ? 29_800 : 20_500 + index * 9,
+                                 swapMB: 900 + index * 3 + (index >= 176 ? 900 : 0), cpu: build ? 88 : 22 + wave * 3, pressure: build ? 4 : 2, sources: sources)
+        }
         return data
     }
 }

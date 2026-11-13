@@ -32,6 +32,7 @@ struct RootView: View {
         switch section {
         case .overview: OverviewView()
         case .memory: MemoryView()
+        case .history: HistoryView()
         case .ports: PortsView()
         case .projects: ProjectsView()
         case .agents: AgentsView()
@@ -49,7 +50,7 @@ struct Sidebar: View {
     @Environment(AppModel.self) private var model
 
     private let groups: [(String, [SidebarSection])] = [
-        (L("Sistema"), [.overview, .memory, .load]),
+        (L("Sistema"), [.overview, .memory, .history, .load]),
         (L("Desarrollo"), [.ports, .projects, .agents, .caches, .toolkit]),
         (L("Control"), [.rules, .copilot, .settings]),
     ]

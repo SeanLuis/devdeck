@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- History: a summary per minute kept for seven days, with memory and swap over time, who was using memory at any minute, and the moments memory reached its limit
+- Leak detection: processes whose memory only grows are flagged, with a recommendation to restart them
+
 ## 0.1.3
 
 - Memory and swap: "Free swap" lets you pick what to close, restart or reopen to get swap back, with an estimate for each
@@ -36,5 +41,5 @@ First public release.
 - AI agents panel: live sessions with subagents, accounts and usage limits, tokens for Claude Code, Codex, Devin, OpenCode and Gemini CLI
 - Copilot as a turn-based agent with approval cards, conversation history, and Claude Code, Codex or OpenAI API as engine
 - Island with System, Agents, Accounts and Copilot boards; always on, only when needed, or off
-- Raycast-style launcher with a configurable global shortcut
+- Command launcher with a configurable global shortcut
 - English, Spanish and Portuguese
