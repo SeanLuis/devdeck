@@ -129,6 +129,7 @@ struct HeroHeader<Trailing: View>: View {
                 Text(subtitle).font(.system(size: 13)).foregroundStyle(Theme.secondaryText)
             }
             Spacer()
+            AccountChip()
             trailing()
         }
         .padding(.bottom, 2)

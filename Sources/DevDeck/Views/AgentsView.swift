@@ -5,6 +5,8 @@ import SwiftUI
 /// Coding agents on this Mac: what is installed, what is running, and how many tokens each one burned.
 struct AgentsView: View {
     @Environment(AppModel.self) private var model
+    /// One group at a time: what is running, the accounts, or what was spent.
+    @AppStorage("agentsTab") private var tab = "activity"
 
     var body: some View {
         let report = model.agentUsage
@@ -22,67 +24,28 @@ struct AgentsView: View {
                     .disabled(model.agentScanning)
                 }
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-                    ForEach(report.installs) { install in
-                        AgentCard(install: install, today: report.total(agent: install.name, day: today),
-                                  week: report.total(agent: install.name))
-                    }
+                Picker("", selection: $tab) {
+                    Text(L("Actividad")).tag("activity")
+                    Text(L("Cuentas y límites")).tag("accounts")
+                    Text(L("Consumo")).tag("usage")
                 }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
 
-                AgentWorkPanel(work: work)
-                LeftoversPanel()
-                AccountsPanel()
-                BudgetsPanel()
-
-                HStack(alignment: .top, spacing: 12) {
-                    Panel(L("Tokens por día · últimos %@ días", "\(report.days)")) {
-                        TokensByDayChart(report: report).frame(height: 200)
-                    }
-                    Panel(L("Por modelo")) {
-                        VStack(spacing: 8) {
-                            let models = report.byModel()
-                            let maxValue = Double(models.first?.tokens.billable ?? 1)
-                            ForEach(models.prefix(6), id: \.model) { item in
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack {
-                                        Text(item.model).font(.system(size: 12, design: .monospaced)).lineLimit(1)
-                                        Spacer()
-                                        if let dollars = model.prices.cost(item.tokens, model: item.model) {
-                                            Text(costText(dollars)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
-                                        }
-                                        Text(compact(item.tokens.billable)).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondaryText)
-                                    }
-                                    UsageBar(fraction: Double(item.tokens.billable) / max(maxValue, 1), tint: Theme.tint)
-                                }
-                            }
-                            if models.isEmpty { Text(L("Sin datos todavía")).font(.caption).foregroundStyle(Theme.tertiaryText) }
+                if tab == "activity" {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                        ForEach(report.installs.filter { used($0, report) }) { install in
+                            AgentCard(install: install, today: report.total(agent: install.name, day: today),
+                                      week: report.total(agent: install.name))
                         }
                     }
-                    .frame(maxWidth: 340)
-                }
 
-                HStack(alignment: .top, spacing: 12) {
-                    Panel(L("Proyectos con más consumo")) {
-                        VStack(spacing: 8) {
-                            ForEach(Array(report.byProject().enumerated()), id: \.offset) { _, item in
-                                HStack(spacing: 10) {
-                                    IconTile(symbol: "folder", size: 22)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text((item.project as NSString).lastPathComponent).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                        Text("\(item.agent) · \(Fmt.tilde(item.project))").font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(1).truncationMode(.middle)
-                                    }
-                                    Spacer()
-                                    VStack(alignment: .trailing, spacing: 1) {
-                                        Text(compact(item.tokens.billable)).font(.system(size: 13).monospacedDigit())
-                                        let cost = report.cost(model.prices) { $0.agent == item.agent && $0.project == item.project }
-                                        Text(cost.hasPrice ? cost.text + " · " + L("%d respuestas", item.tokens.messages) : L("%d respuestas", item.tokens.messages))
-                                            .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
-                                    }
-                                }
-                            }
-                            if report.buckets.isEmpty { Text(L("Sin datos todavía")).font(.caption).foregroundStyle(Theme.tertiaryText) }
-                        }
+                    let unused = report.installs.filter { !used($0, report) }
+                    if !unused.isEmpty {
+                        Text(L("Instalados sin uso esta semana: %@", unused.map(\.name).joined(separator: ", ")))
+                            .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
                     }
+                    AgentWorkPanel(work: work)
+                    LeftoversPanel()
                     Panel(L("Sesiones recientes")) {
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(work.recent) { row in AgentSessionRow(row: row) }
@@ -92,14 +55,80 @@ struct AgentsView: View {
                         }
                     }
                 }
-                Panel(L("Consumo del propio DevDeck")) { OwnUsagePanel() }
-                Text(L("Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de Claude Code vienen de claude-swap cuando está instalado."))
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
-                Text(L("El coste (≈ $) es lo que valdrían esos tokens a precio de lista de la API; con una suscripción no se paga por token. Los modelos sin precio conocido no suman: puedes añadirlos en prices.json, en la carpeta de datos de DevDeck."))
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+
+                if tab == "accounts" {
+                    AccountsPanel()
+                    BudgetsPanel()
+                }
+
+                if tab == "usage" {
+                    HStack(alignment: .top, spacing: 12) {
+                        Panel(L("Tokens por día · últimos %@ días", "\(report.days)")) {
+                            TokensByDayChart(report: report).frame(height: 200)
+                        }
+                        Panel(L("Por modelo")) {
+                            VStack(spacing: 8) {
+                                let models = report.byModel()
+                                let maxValue = Double(models.first?.tokens.billable ?? 1)
+                                ForEach(models.prefix(6), id: \.model) { item in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(item.model).font(.system(size: 12, design: .monospaced)).lineLimit(1)
+                                            Spacer()
+                                            if let dollars = model.prices.cost(item.tokens, model: item.model) {
+                                                Text(costText(dollars)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
+                                            }
+                                            Text(compact(item.tokens.billable)).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondaryText)
+                                        }
+                                        UsageBar(fraction: Double(item.tokens.billable) / max(maxValue, 1), tint: Theme.tint)
+                                    }
+                                }
+                                if models.isEmpty { Text(L("Sin datos todavía")).font(.caption).foregroundStyle(Theme.tertiaryText) }
+                            }
+                        }
+                        .frame(maxWidth: 340)
+                    }
+
+                    HStack(alignment: .top, spacing: 12) {
+                        Panel(L("Proyectos con más consumo")) {
+                            VStack(spacing: 8) {
+                                ForEach(Array(report.byProject().enumerated()), id: \.offset) { _, item in
+                                    HStack(spacing: 10) {
+                                        IconTile(symbol: "folder", size: 22)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text((item.project as NSString).lastPathComponent).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                            Text("\(item.agent) · \(Fmt.tilde(item.project))").font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(1).truncationMode(.middle)
+                                        }
+                                        Spacer()
+                                        VStack(alignment: .trailing, spacing: 1) {
+                                            Text(compact(item.tokens.billable)).font(.system(size: 13).monospacedDigit())
+                                            let cost = report.cost(model.prices) { $0.agent == item.agent && $0.project == item.project }
+                                            Text(cost.hasPrice ? cost.text + " · " + L("%d respuestas", item.tokens.messages) : L("%d respuestas", item.tokens.messages))
+                                                .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
+                                        }
+                                    }
+                                }
+                                if report.buckets.isEmpty { Text(L("Sin datos todavía")).font(.caption).foregroundStyle(Theme.tertiaryText) }
+                            }
+                        }
+                    }
+                    Panel(L("Consumo del propio DevDeck")) { OwnUsagePanel() }
+                    Text(L("Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de cada cuenta se leen de la propia cuenta."))
+                        .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                    Text(L("El coste (≈ $) es lo que valdrían esos tokens a precio de lista de la API; con una suscripción no se paga por token. Los modelos sin precio conocido no suman: puedes añadirlos en prices.json, en la carpeta de datos de DevDeck."))
+                        .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                }
             }
             .padding(28)
         }
+    }
+}
+
+extension AgentsView {
+    /// An agent earns a card when it is running or spent something this week.
+    func used(_ install: AgentInstall, _ report: AgentUsageReport) -> Bool {
+        report.total(agent: install.name).messages > 0
+            || model.snapshot.groups.contains { $0.kind == .agent && $0.name.lowercased().hasPrefix(install.name.lowercased().prefix(5)) }
     }
 }
 

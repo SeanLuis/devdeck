@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.1.5
 
+- The account in use is shown at the top of every page, with a menu to switch
+- AI agents is grouped into Activity, Accounts and limits, and Usage; agents that were not used this week no longer take a card
+- Memory by source shows the five heaviest sources as ordered layers, with what each one uses now
+- License: from this version DevDeck is under the PolyForm Noncommercial License 1.0.0; versions up to 0.1.4 remain MIT
 - Accounts: DevDeck keeps several Claude Code logins in its own keychain store and switches between them, with the real limits of each one read from its own account. Accounts managed by claude-swap can be imported without logging in again. Codex logins can be saved and switched too, and DevDeck suggests another account when the one in use is close to its limit
 - Budgets: a token ceiling for a project, an agent or everything, or a share of an account's limit, with a notice at 80% and 100%
 - A notice when an agent finishes a long turn or stops to ask something

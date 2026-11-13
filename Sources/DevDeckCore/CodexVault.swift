@@ -26,6 +26,16 @@ extension AccountVault {
         return nil
     }
 
+    /// Codex's file has line breaks, and the keychain tool hands back anything that is not one printable line
+    /// in another form. The saved copy is therefore kept as base64 and restored byte for byte.
+    static func packCodex(_ auth: String) -> String { "b64:" + Data(auth.utf8).base64EncodedString() }
+
+    static func unpackCodex(_ stored: String?) -> String? {
+        guard let stored else { return nil }
+        guard stored.hasPrefix("b64:") else { return stored }
+        return Data(base64Encoded: String(stored.dropFirst(4))).map { String(decoding: $0, as: UTF8.self) }
+    }
+
     public func liveCodexAuth() -> String? { try? String(contentsOfFile: codexAuthPath, encoding: .utf8) }
 
     public func liveCodexIdentity() -> CodexIdentity? { Self.codexIdentity(auth: liveCodexAuth()) }
@@ -48,7 +58,12 @@ extension AccountVault {
             account = StoredAccount(agent: Self.codex, email: live.email, organizationUuid: live.accountID, organizationName: live.plan)
             list.append(account)
         }
-        try keychain.set(service: Self.service, account: slot(account), secret: auth)
+        do { try keychain.set(service: Self.service, account: slot(account), secret: Self.packCodex(auth)) }
+        catch {
+            // Leave nothing half-saved behind.
+            if !accounts().contains(where: { $0.id == account.id }) { try? keychain.delete(service: Self.service, account: slot(account)) }
+            throw error
+        }
         save(list)
         return account
     }
@@ -57,7 +72,7 @@ extension AccountVault {
     public func switchCodex(to id: String) throws {
         lock.lock(); defer { lock.unlock() }
         guard let target = accounts().first(where: { $0.id == id && $0.agent == Self.codex }) else { throw AccountVaultError.unknownAccount }
-        guard let saved = try keychain.get(service: Self.service, account: slot(target)), Self.codexIdentity(auth: saved) != nil else {
+        guard let saved = Self.unpackCodex(try keychain.get(service: Self.service, account: slot(target))), Self.codexIdentity(auth: saved) != nil else {
             throw AccountVaultError.missingCredentials(target.email)
         }
         let original = liveCodexAuth()

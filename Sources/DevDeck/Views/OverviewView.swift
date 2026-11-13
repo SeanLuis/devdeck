@@ -128,24 +128,51 @@ struct MemoryByOriginChart: View {
         let points: [MetricPoint]
     }
 
+    /// One ink, stepped from strong to faint in the order of the stack: the layers read as layers.
+    static let ramp: [Double] = [0.82, 0.56, 0.38, 0.24, 0.14]
+
     var body: some View {
-        let top = model.snapshot.groups.filter { $0.kind != .system }.prefix(7)
+        // The five heaviest sources; more bands than that cannot be told apart.
+        let top = Array(model.snapshot.groups.filter { $0.kind != .system }.prefix(5))
         let series = top.map { Series(id: $0.id, name: $0.name, points: model.history(for: $0.id, minutes: minutes)) }
         if series.allSatisfy({ $0.points.count < 2 }) {
             EmptyHint(title: L("Recolectando datos…"), symbol: "chart.xyaxis.line", message: L("El gráfico se llena con cada muestra (cada %@ s).", "\(Int(model.settings.sampleInterval))"))
         } else {
-            Chart {
-                ForEach(series) { s in
-                    ForEach(s.points, id: \.time) { p in
-                        AreaMark(x: .value(L("Hora"), p.time), y: .value("GB", p.memMB / 1024), stacking: .standard)
-                            .foregroundStyle(by: .value(L("Origen"), s.name))
-                            .interpolationMethod(.monotone)
+            VStack(alignment: .leading, spacing: 12) {
+                Chart {
+                    ForEach(Array(series.enumerated()), id: \.element.id) { index, s in
+                        ForEach(s.points, id: \.time) { p in
+                            AreaMark(x: .value(L("Hora"), p.time), y: .value("GB", p.memMB / 1024), stacking: .standard)
+                                .foregroundStyle(by: .value(L("Origen"), s.name))
+                                .interpolationMethod(.monotone)
+                        }
                     }
                 }
+                .chartForegroundStyleScale(domain: series.map(\.name), range: series.indices.map { Theme.ink(Self.ramp[min($0, Self.ramp.count - 1)]) })
+                .chartLegend(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+                        AxisGridLine().foregroundStyle(Theme.ink(0.06))
+                        AxisValueLabel { if let gb = value.as(Double.self) { Text("\(Int(gb)) GB").font(.system(size: 10)).foregroundStyle(Theme.tertiaryText) } }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                        AxisValueLabel(format: .dateTime.hour().minute()).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
+                    }
+                }
+                // What each band is and what it uses now, in the order of the stack.
+                HStack(spacing: 18) {
+                    ForEach(Array(top.enumerated()), id: \.element.id) { index, group in
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2).fill(Theme.ink(Self.ramp[min(index, Self.ramp.count - 1)])).frame(width: 8, height: 8)
+                            Text(group.name).font(.system(size: 11)).foregroundStyle(Theme.secondaryText).lineLimit(1)
+                            Text(Fmt.bytes(group.memoryBytes)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiaryText)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
             }
-            .chartForegroundStyleScale(range: ChartPalette.colors)
-            .chartYAxisLabel("GB")
-            .chartLegend(position: .bottom, spacing: 10)
         }
     }
 }

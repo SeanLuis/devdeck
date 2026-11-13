@@ -526,7 +526,7 @@ extension L10n {
         "Logs del CLI de Devin": "Logs da CLI do Devin",
         "Los que dejan abiertos los agentes y los tests": "Os que os agentes e os testes deixam abertos",
         "Los que saltan solos con una alerta. Haiku responde en segundos y gasta poco": "As que disparam sozinhas com um alerta. O Haiku responde em segundos e gasta pouco",
-        "Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de Claude Code vienen de claude-swap cuando está instalado.": "Os tokens são lidos dos registros locais de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + saída + gravação de cache; as leituras de cache são mostradas à parte. Os limites do Claude Code vêm do claude-swap quando está instalado.",
+        "Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de cada cuenta se leen de la propia cuenta.": "Os tokens são lidos dos registros locais de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + saída + gravação de cache; as leituras de cache são mostradas à parte. Os limites de cada conta são lidos da própria conta.",
         "Límite": "Limite",
         "Límite de %@ GB para %@": "Limite de %@ GB para %@",
         "Límite de RAM": "Limite de RAM",
@@ -1139,5 +1139,10 @@ extension L10n {
         "%@ tiene margen (%d%%). ¿Cambiar Claude Code a esa cuenta?": "%@ tem folga (%d%%). Trocar o Claude Code para essa conta?",
         "Sugerir otra cuenta al acercarse al límite": "Sugerir outra conta perto do limite",
         "Cuando la cuenta en uso pasa de este uso y otra guardada tiene margen. Solo sugiere: el cambio lo confirmas tú.": "Quando a conta em uso passa deste nível e outra salva tem folga. Só sugere: a troca é você quem confirma.",
+        "Ver cuentas y límites": "Ver contas e limites",
+        "Cuenta de Claude Code en uso: %@": "Conta do Claude Code em uso: %@",
+        "Actividad": "Atividade",
+        "Consumo": "Consumo",
+        "Instalados sin uso esta semana: %@": "Instalados sem uso nesta semana: %@",
     ]
 }

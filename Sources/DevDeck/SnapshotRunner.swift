@@ -32,6 +32,8 @@ enum SnapshotRunner {
                 model.gamePausedGroups = ["Chrome headless", "Codex"]
             }
             // `--pane ai` opens Settings on that section.
+            // `--tab accounts` opens the Agents page on that group.
+            if let index = CommandLine.arguments.firstIndex(of: "--tab") { UserDefaults.standard.set(CommandLine.arguments[index + 1], forKey: "agentsTab") }
             if let index = CommandLine.arguments.firstIndex(of: "--pane") { UserDefaults.standard.set(CommandLine.arguments[index + 1], forKey: "settingsPane") }
             if CommandLine.arguments.contains("--light") { model.settings.appearance = "light" } else { model.settings.appearance = "dark" }
             // A canned conversation so the agent UI can be checked without calling a model.

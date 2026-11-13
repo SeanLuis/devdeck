@@ -277,7 +277,8 @@ struct CodexVaultTests {
         let token = part(["alg": "none"]) + "." + part(["email": email, "https://api.openai.com/auth": ["chatgpt_plan_type": "plus"]]) + ".sig"
         let object: [String: Any] = ["auth_mode": "chatgpt", "tokens": ["id_token": token, "access_token": "access-\(email)", "refresh_token": "refresh-\(email)", "account_id": account],
                                      "last_refresh": "2026-11-13T00:00:00Z"]
-        return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        // Pretty-printed with a trailing line break, as Codex writes it.
+        return String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted]), as: UTF8.self) + "\n"
     }
 
     @Test func savesAndSwapsTheAuthFile() throws {

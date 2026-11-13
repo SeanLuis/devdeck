@@ -526,7 +526,7 @@ extension L10n {
         "Logs del CLI de Devin": "Devin CLI logs",
         "Los que dejan abiertos los agentes y los tests": "The ones agents and tests leave open",
         "Los que saltan solos con una alerta. Haiku responde en segundos y gasta poco": "The ones an alert triggers by itself. Haiku answers in seconds and spends little",
-        "Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de Claude Code vienen de claude-swap cuando está instalado.": "Tokens are read from each agent's local logs (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = input + output + cache writes; cache reads are shown separately. Claude Code limits come from claude-swap when it is installed.",
+        "Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de cada cuenta se leen de la propia cuenta.": "Tokens are read from each agent's local logs (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = input + output + cache writes; cache reads are shown separately. Each account's limits are read from the account itself.",
         "Límite": "Limit",
         "Límite de %@ GB para %@": "%@ GB limit for %@",
         "Límite de RAM": "RAM limit",
@@ -1139,5 +1139,10 @@ extension L10n {
         "%@ tiene margen (%d%%). ¿Cambiar Claude Code a esa cuenta?": "%@ has room (%d%%). Switch Claude Code to that account?",
         "Sugerir otra cuenta al acercarse al límite": "Suggest another account near the limit",
         "Cuando la cuenta en uso pasa de este uso y otra guardada tiene margen. Solo sugiere: el cambio lo confirmas tú.": "When the account in use passes this level and another saved one has room. It only suggests: you confirm the switch.",
+        "Ver cuentas y límites": "See accounts and limits",
+        "Cuenta de Claude Code en uso: %@": "Claude Code account in use: %@",
+        "Actividad": "Activity",
+        "Consumo": "Usage",
+        "Instalados sin uso esta semana: %@": "Installed, not used this week: %@",
     ]
 }

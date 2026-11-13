@@ -9,7 +9,7 @@
 DevDeck is a native macOS app that attributes memory, swap, CPU and listening ports to the project, AI coding agent, container or application responsible, and lets you act on it.
 
 [![CI](https://github.com/SeanLuis/devdeck/actions/workflows/ci.yml/badge.svg)](https://github.com/SeanLuis/devdeck/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-black.svg)](LICENSE)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Swift 6](https://img.shields.io/badge/Swift-6-black)
 
@@ -52,7 +52,7 @@ DevDeck makes that attribution. It is designed for a typical development machine
 ### AI coding agents
 
 - **Working now**: every open session with its folder, whether it is working or idle, RAM, CPU, tokens, and the **subagents** it spawned.
-- **Accounts and limits**: your Claude Code accounts with their 5-hour, 7-day and per-model usage, and account switching with confirmation (through [claude-swap](https://github.com/realiti4/claude-swap) when installed). Codex account and plan.
+- **Accounts and limits**: your Claude Code accounts with their 5-hour, 7-day and per-model usage, and account switching with confirmation. DevDeck keeps the logins in its own keychain store, reads each account's real limits, and can import the accounts [claude-swap](https://github.com/realiti4/claude-swap) manages. Codex logins can be saved and switched too.
 - **Real icons** for apps and agents, taken from what is installed on your Mac; in colour, grey, or plain symbols.
 - **Tokens** per day, per hour, per model and per project for **Claude Code, Codex, Devin, OpenCode and Gemini CLI**, read incrementally from what each agent logs locally.
 
@@ -158,7 +158,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 | OpenCode | `~/.local/share/opencode/opencode.db` |
 | Gemini CLI | `~/.gemini/tmp/*/chats/*.json` |
 
-Claude Code does not publish its usage limits on disk, so real percentages need [claude-swap](https://github.com/realiti4/claude-swap). Without it, DevDeck shows the current account and the tokens measured in the last 5 hours.
+Claude Code does not publish its usage limits on disk, so DevDeck asks the account itself, with the login Claude Code already has. Without a saved account it shows the current one and the tokens measured in the last 5 hours.
 
 ## Languages
 
@@ -191,4 +191,4 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Releas
 
 ## License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE). You may use, study, modify and share DevDeck for any noncommercial purpose, keeping the copyright notice. Commercial use needs written permission from the author. Versions up to 0.1.4 were released under the MIT License.
