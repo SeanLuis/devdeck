@@ -65,6 +65,11 @@ enum SnapshotRunner {
             let sample = AppRelease(version: "0.2.0", notes: "## What's new\n\n- Token budgets per project, with alerts\n- Readers for **Cursor** and Aider\n- The island remembers the last board you used\n\n## Fixes\n\n- Lower CPU use while the window is open",
                                     pageURL: "https://github.com/\(Updates.repository)/releases", downloadURL: nil, publishedAt: Date().addingTimeInterval(-7200))
             await render(UpdateSheet(release: sample).environment(model).appLanguage(model.settings.language), size: CGSize(width: 560, height: 470), to: "\(outDir)/update.png")
+            if let browser = model.snapshot.groups.first(where: { $0.kind == .browser }) ?? model.snapshot.groups.first(where: { $0.kind == .app }) {
+                await render(ProcessTable(group: browser).padding(16).frame(maxHeight: .infinity, alignment: .top).background(Theme.surface).environment(model)
+                    .appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 1000, height: 420), to: "\(outDir)/processes.png")
+            }
+            await render(SwapReliefSheet().environment(model).appLanguage(model.settings.language), size: CGSize(width: 580, height: 520), to: "\(outDir)/swap-relief.png")
             // The island in each of its states. `--notch` draws it as it hangs from a MacBook notch.
             if CommandLine.arguments.contains("--notch") { model.notchWidth = 190; model.notchHeight = 32 }
             let islandSize = CGSize(width: IslandController.size.width, height: IslandController.size.height)

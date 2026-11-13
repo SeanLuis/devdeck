@@ -88,6 +88,7 @@ extension L10n {
         for definition in CacheScanner.globalDefinitions { keys += [definition.label, definition.note, definition.regenerate] }
         keys += ["Se vuelve a generar con el build", "Se regenera solo en el próximo dev/build"]
         keys += ["crítica", "alta", "normal", "5 h", "7 días", "créditos ilimitados"]
+        keys += ProcessRole.displayStrings
         // Tool names of the copilot and the sort options of the ports table.
         keys += ["Revisó los mayores consumidores", "Inspeccionó procesos", "Revisó los puertos", "Analizó el swap", "Revisó las cachés",
                  "Revisó el uso de agentes", "Consultó el proyecto", "Puerto", "Memoria", "Proyecto"]

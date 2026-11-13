@@ -37,7 +37,8 @@ struct CommandPaletteView: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        let list = items
+        // Hidden launcher: building its list on every sample would be wasted work.
+        let list = floating && !model.paletteVisible ? [] : items
         VStack(spacing: 0) {
             searchBar(list)
             Rectangle().fill(Theme.ink(0.08)).frame(height: 1)

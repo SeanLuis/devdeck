@@ -96,6 +96,8 @@ final class PaletteController {
             let frame = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.maxY - panel.frame.height - frame.height * 0.16))
         }
+        model.paletteVisible = true
+        panel.onClose = { [weak model] in model?.paletteVisible = false }
         model.paletteToken = UUID()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)

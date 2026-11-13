@@ -207,6 +207,8 @@ public enum AISnapshotBuilder {
 public struct OpenAIClient: Sendable {
     public let config: AIConfig
     public let apiKey: String
+    /// What the call is for, for DevDeck's own usage ledger: "copilot" or "automatic".
+    public var purpose = "copilot"
 
     public init(config: AIConfig, apiKey: String) {
         self.config = config
@@ -351,6 +353,8 @@ public struct OpenAIClient: Sendable {
                     ?? (obj["message"] as? String) ?? "error"
                 throw AIError.badResponse(message)
             case "response.completed":
+                OwnUsage.shared.record(purpose: purpose, model: config.model,
+                                       tokens: OwnUsage.tokens(fromUsage: (obj["response"] as? [String: Any])?["usage"] as? [String: Any]))
                 return
             default:
                 continue
@@ -407,6 +411,7 @@ public struct OpenAIClient: Sendable {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw AIError.http(status, Self.errorMessage(data)) }
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        OwnUsage.shared.record(purpose: purpose, model: config.model, tokens: OwnUsage.tokens(fromUsage: obj?["usage"] as? [String: Any]))
         guard let output = obj?["output"] as? [[String: Any]] else { throw AIError.badResponse(L("sin 'output'")) }
         let texts = output
             .filter { ($0["type"] as? String) == "message" }

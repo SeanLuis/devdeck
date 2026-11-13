@@ -85,6 +85,7 @@ struct AgentsView: View {
                         }
                     }
                 }
+                Panel(L("Consumo del propio DevDeck")) { OwnUsagePanel() }
                 Text(L("Los tokens se leen de los registros locales de cada agente (Claude Code, Codex, Devin, OpenCode, Gemini CLI). “Tokens” = entrada + salida + escritura de caché; las lecturas de caché se muestran aparte. Los límites de Claude Code vienen de claude-swap cuando está instalado."))
                     .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
             }

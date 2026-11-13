@@ -37,8 +37,10 @@ public struct AIConfig: Codable, Hashable, Sendable {
     public var provider: AIProvider = .claudeCode
     /// False until the user (or first-run detection) picks a provider.
     public var providerChosen = false
-    /// Haiku by default: reading a machine snapshot does not need a large model, and it answers in seconds.
-    public var claudeModel: String = "haiku"
+    /// Model for the copilot's conversations.
+    public var claudeModel: String = "sonnet"
+    /// Model for analyses nobody asked for (alerts): the small, fast one by default.
+    public var claudeAutoModel: String = "haiku"
     public var codexModel: String = "default"
     public var model: String = "gpt-6-luna"
     public var baseURL: String = "https://api.openai.com/v1"
@@ -63,6 +65,7 @@ public struct AIConfig: Codable, Hashable, Sendable {
         provider = (try? c.decodeIfPresent(AIProvider.self, forKey: .provider)) ?? d.provider
         providerChosen = try c.decodeIfPresent(Bool.self, forKey: .providerChosen) ?? false
         claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? d.claudeModel
+        claudeAutoModel = try c.decodeIfPresent(String.self, forKey: .claudeAutoModel) ?? d.claudeAutoModel
         codexModel = try c.decodeIfPresent(String.self, forKey: .codexModel) ?? d.codexModel
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? d.baseURL

@@ -29,9 +29,15 @@ struct SettingsView: View {
                     Divider().overlay(Theme.ink(0.08))
                     switch model.settings.ai.provider {
                     case .claudeCode:
-                        row(L("Modelo de Claude"), L("Haiku responde en segundos y basta para leer el estado de la Mac. Los análisis automáticos siempre usan Haiku")) {
+                        row(L("Modelo del copiloto"), L("El que responde cuando preguntas. Sonnet equilibra calidad y rapidez; Opus es el más capaz y el más lento")) {
                             Picker("", selection: $model.settings.ai.claudeModel) {
                                 ForEach(["haiku", "sonnet", "opus", "default"], id: \.self) { Text($0).tag($0) }
+                            }
+                            .labelsHidden().frame(width: 240)
+                        }
+                        row(L("Modelo de los análisis automáticos"), L("Los que saltan solos con una alerta. Haiku responde en segundos y gasta poco")) {
+                            Picker("", selection: $model.settings.ai.claudeAutoModel) {
+                                ForEach(["haiku", "sonnet", "opus"], id: \.self) { Text($0).tag($0) }
                             }
                             .labelsHidden().frame(width: 240)
                         }
@@ -89,6 +95,8 @@ struct SettingsView: View {
                     row(L("Privacidad"), L("Rutas con ~, tokens y claves siempre se enmascaran; nunca se envían variables de entorno")) {
                         Toggle(L("Enviar líneas de comando (redactadas)"), isOn: $model.settings.ai.shareCommandLines).toggleStyle(.switch)
                     }
+                    Divider().overlay(Theme.ink(0.08))
+                    OwnUsagePanel()
                     DisclosureGroup(L("Avanzado"), isExpanded: $showAdvanced) {
                         row(L("Endpoint compatible"), L("API Responses de OpenAI o un gateway compatible")) {
                             TextField("https://api.openai.com/v1", text: $model.settings.ai.baseURL).textFieldStyle(.roundedBorder).frame(width: 320)
@@ -397,5 +405,37 @@ struct ProviderRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// What DevDeck itself has spent on AI, in plain numbers.
+struct OwnUsagePanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let today = OwnUsage.shared.summary(lastDays: 1)
+        let week = OwnUsage.shared.summary(lastDays: 7)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("Lo que gasta DevDeck").uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiaryText)
+            HStack(spacing: 0) {
+                stat(L("Hoy"), today.total)
+                stat(L("7 días"), week.total)
+                stat(L("Tus preguntas · 7 días"), week.purposes["copilot"] ?? TokenCount())
+                stat(L("Análisis automáticos · 7 días"), week.purposes["automatic"] ?? TokenCount())
+            }
+            Text(model.settings.ai.provider == .openAI
+                 ? L("DevDeck solo usa IA cuando le preguntas al copiloto o cuando un análisis automático salta por una alerta; esas llamadas se cobran a tu API key. Leer el uso de tus agentes no gasta nada: sale de archivos de este Mac.")
+                 : L("DevDeck solo usa IA cuando le preguntas al copiloto o cuando un análisis automático salta por una alerta; esas llamadas usan tu sesión del agente y cuentan para tu límite. Leer el uso de tus agentes no gasta nada: sale de archivos de este Mac."))
+                .font(.caption).foregroundStyle(Theme.secondaryText).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func stat(_ title: String, _ tokens: TokenCount) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.tertiaryText)
+            Text(tokens.messages > 0 ? compact(tokens.billable) : "0").font(.system(size: 15, weight: .medium).monospacedDigit())
+            Text(plural(tokens.messages, "%d consulta", "%d consultas")).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

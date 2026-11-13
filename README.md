@@ -36,8 +36,8 @@ DevDeck does. It is built for the way developers work now: several dev servers, 
 | | |
 |---|---|
 | **Overview** | RAM, memory pressure, swap, CPU and disk, with memory stacked **by source**: project, AI agent, browser, Docker, app. |
-| **Memory and swap** | Whether swap is dormant (harmless) or active (slowing you down), growth per minute, compressed memory, thrashing detection, and who has memory out of RAM. |
-| **Load by source** | Every process attributed to whoever launched it. MCP servers count for the agent that started them. Headless browsers show who launched them. |
+| **Memory and swap** | Whether swap is dormant (harmless) or active (slowing you down), growth per minute, compressed memory, thrashing detection, and who has memory out of RAM. **Free swap** lets you pick what to close, restart or reopen to get it back. |
+| **Load by source** | Every process attributed to whoever launched it, and named for what it does: the 40 identical helpers of a browser become "Tab or window × 38", "GPU", "Network", "Extension"… MCP servers count for the agent that started them. Headless browsers show who launched them. |
 | **Ports** | Every listening port with the project, dev server (Next.js, Vite, tsx…) and Docker container behind it. Open, restart or stop. |
 | **Projects** | Running and discovered projects: services, ports, memory over time, containers, caches, `package.json` scripts, remembered commands and logs. |
 | **Caches and disk** | `.next`, `node_modules`, `.turbo`, `target`, `.venv`… per project, plus global caches (npm, pnpm, uv, Homebrew, Xcode, Playwright…), each cleaned the right way. |
@@ -108,7 +108,7 @@ The copilot works as a turn-based agent. It shows its plan and the read-only too
 | Reduce Docker's RAM | Changes the size of Docker Desktop's VM and restarts it. |
 | Run a tool | Any recipe from Tools; the card shows the exact command and its output. |
 
-It runs on **your own agent login**: Claude Code (Haiku by default, so answers take seconds) or Codex, with no API key (the CLI runs with no tools, no MCP servers and no saved history), or the OpenAI API with your key.
+It runs on **your own agent login**: Claude Code (Sonnet for your questions, Haiku for automatic analyses; both configurable) or Codex, with no API key (the CLI runs with no tools, no MCP servers and no saved history), or the OpenAI API with your key.
 
 ### Restart without losing anything
 
@@ -116,7 +116,7 @@ When DevDeck sees a dev server it remembers its command, folder and environment.
 
 ## Install
 
-Download `DevDeck.zip` from the [latest release](https://github.com/SeanLuis/devdeck/releases/latest), unzip it and move `DevDeck.app` to Applications. The app is signed and notarized by Apple, and runs on Apple silicon and Intel.
+Download `DevDeck.zip` from the [latest release](https://github.com/SeanLuis/devdeck/releases/latest), unzip it and move `DevDeck.app` to Applications. The app is signed and notarized by Apple, and it is a universal binary: the same download runs on Apple silicon and Intel Macs.
 
 Requires macOS 14 or later.
 
@@ -131,7 +131,7 @@ cd devdeck
 open ~/Applications/DevDeck.app
 ```
 
-Requires Xcode 16 or later (Swift 6). There are no third-party dependencies.
+Requires Xcode 16 or later (Swift 6). There are no third-party dependencies. The script builds for your Mac's architecture; `UNIVERSAL=1 ./scripts/bundle.sh` builds for Apple silicon and Intel.
 
 ## Privacy and safety
 
@@ -139,6 +139,7 @@ Requires Xcode 16 or later (Swift 6). There are no third-party dependencies.
 - Nothing is sent anywhere unless you use the copilot. When you do, the model receives a **redacted** summary: home paths become `~`, tokens and keys in command lines are masked, and environment variables are never included.
 - Actions proposed by the AI are validated against the live state: only groups, PIDs and cache paths that exist. A card that names a PID is only applied if that process is still the same one.
 - "Apply what is safe" autopilot only closes headless browsers and deletes regenerable build caches of stopped projects.
+- DevDeck only calls a model when you ask the copilot or when an alert triggers an automatic analysis, and it keeps a ledger of what it spent itself (Settings → AI), separate from your agents' usage.
 - Agent usage is read from local files only. Account e-mails are read to show them to you and are not stored or sent.
 - Data lives in `~/Library/Application Support/DevDeck/`. The API key and remembered commands are stored with `600` permissions.
 

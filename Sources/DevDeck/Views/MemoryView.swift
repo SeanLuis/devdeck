@@ -7,6 +7,7 @@ struct MemoryView: View {
     @Environment(AppModel.self) private var model
     @State private var minutes: Double = 15
     @State private var askedAI = false
+    @State private var showRelief = false
 
     var body: some View {
         let r = model.swapReport
@@ -14,22 +15,38 @@ struct MemoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HeroHeader(section: .memory, title: L("Memoria y swap"), subtitle: L("Qué está llenando el swap, si te está frenando y qué cerrar")) {
+                    Button { showRelief = true } label: {
+                        if model.swapRelieving { ProgressView().controlSize(.small) } else { Label(L("Liberar swap…"), systemImage: "arrow.uturn.backward.circle") }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.swapRelieving)
                     Button {
                         askedAI = true
-                        Task { await model.diagnose(focus: "Analiza el swap a fondo: qué lo llena, si está activo o dormido, si hay thrashing y qué cerrar para bajarlo. Sé concreto con nombres y cifras.") }
-                    } label: {
-                        if model.aiBusy { ProgressView().controlSize(.small) } else { Label(L("Analizar con IA"), systemImage: "sparkles") }
-                    }
+                        model.resetConversation()
+                        model.startAgent(L("Analiza mi swap a fondo: qué lo llena, si está activo o dormido, y qué me recomiendas cerrar o reiniciar para bajarlo. Propón las acciones."))
+                    } label: { Label(L("Analizar con IA"), systemImage: "sparkles") }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.aiBusy)
+                    .disabled(model.agentRunning || !model.aiReady)
+                    .help(model.aiReady ? "" : L("Elige un motor de IA en Ajustes"))
                 }
 
                 swapHero(r, s)
 
-                if askedAI, let diagnosis = model.diagnosis {
-                    Panel { DiagnosisContent(diagnosis: diagnosis, date: model.diagnosisDate) }
-                } else if askedAI, let error = model.aiError {
-                    Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger)
+                // The copilot's analysis, with its plan and with every proposal as a card to approve.
+                if askedAI, !model.conversation.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack {
+                            Label(L("Análisis del copiloto"), systemImage: "sparkles").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondaryText)
+                            Text("· \(model.aiEngineLabel)").font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                            Spacer()
+                            Button(L("Seguir en el copiloto")) { model.selectedSection = .copilot; model.showConversation() }.buttonStyle(.borderless).font(.system(size: 12))
+                            Button { askedAI = false } label: { Image(systemName: "xmark") }.buttonStyle(.borderless).help(L("Cerrar"))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        AgentConversationView().frame(height: 380)
+                    }
+                    .glass(cornerRadius: 12)
                 }
 
                 if !r.insights.isEmpty {
@@ -74,6 +91,7 @@ struct MemoryView: View {
             }
             .padding(28)
         }
+        .sheet(isPresented: $showRelief) { SwapReliefSheet().environment(model) }
     }
 
     private func swapHero(_ r: SwapReport, _ s: SystemSample) -> some View {

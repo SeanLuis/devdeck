@@ -410,3 +410,55 @@ struct GameModeTests {
         #expect(!state().hasPrefix("T"))
     }
 }
+
+@Suite("Process roles")
+struct ProcessRoleTests {
+    private func role(_ name: String, _ args: [String], path: String = "/Applications/Google Chrome.app/Contents/Frameworks/X/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper") -> String? {
+        ProcessRole.of(name: name, executablePath: path, args: args)?.key
+    }
+
+    @Test func namesBrowserHelpers() {
+        #expect(role("Google Chrome Helper (Renderer)", ["helper", "--type=renderer", "--seatbelt-client=138"]) == "renderer")
+        #expect(role("Google Chrome Helper (Renderer)", ["helper", "--type=renderer", "--extension-process"]) == "extension")
+        #expect(role("Google Chrome Helper (GPU)", ["helper", "--type=gpu-process"]) == "gpu")
+        #expect(role("Google Chrome Helper", ["helper", "--type=utility", "--utility-sub-type=network.mojom.NetworkService"]) == "network")
+        #expect(role("Google Chrome Helper", ["helper", "--type=utility", "--utility-sub-type=audio.mojom.AudioService"]) == "audio")
+        #expect(role("chrome_crashpad_handler", ["x"]) == "crash")
+    }
+
+    @Test func leavesOrdinaryProcessesAlone() {
+        #expect(ProcessRole.of(name: "Google Chrome", executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", args: ["Google Chrome"]) == nil)
+        #expect(ProcessRole.of(name: "node", executablePath: "/usr/local/bin/node", args: ["node", "server.js"]) == nil)
+        #expect(ProcessRole.of(name: "node", executablePath: "/usr/local/bin/node", args: ["node", "/x/typescript/lib/tsserver.js"])?.key == "tsserver")
+    }
+}
+
+@Suite("Own usage")
+struct OwnUsageTests {
+    @Test func readsUsageFromEachProvider() {
+        let claude = OwnUsage.tokens(fromUsage: ["input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20])
+        #expect(claude.input == 10 && claude.cacheRead == 100 && claude.cacheWrite == 20 && claude.output == 5)
+        let codex = OwnUsage.tokens(fromUsage: ["input_tokens": 120, "cached_input_tokens": 100, "output_tokens": 7])
+        #expect(codex.input == 20 && codex.cacheRead == 100 && codex.output == 7)
+        #expect(OwnUsage.tokens(fromUsage: nil).total == 0)
+    }
+
+    @Test func keepsALedgerPerDayAndPurpose() {
+        let ledger = OwnUsage()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-own-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        ledger.use(directory: dir)
+        var tokens = TokenCount(); tokens.input = 100; tokens.messages = 1
+        let now = Date()
+        ledger.record(purpose: "copilot", model: "m", tokens: tokens, date: now)
+        ledger.record(purpose: "automatic", model: "m", tokens: tokens, date: now.addingTimeInterval(-3 * 86_400))
+        #expect(ledger.summary(lastDays: 1, now: now).total.input == 100)
+        #expect(ledger.summary(lastDays: 7, now: now).total.input == 200)
+        #expect(ledger.summary(lastDays: 7, now: now).purposes["automatic"]?.messages == 1)
+        // A fresh instance reads what was written.
+        let again = OwnUsage()
+        again.use(directory: dir)
+        #expect(again.summary(lastDays: 7, now: now).total.input == 200)
+    }
+}

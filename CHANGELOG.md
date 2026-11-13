@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Memory and swap: "Free swap" lets you pick what to close, restart or reopen to get swap back, with an estimate for each
+- The swap analysis is now the copilot itself, inline: its plan, its answer and every proposal as a card to approve
+- Processes say what they are: browser and Electron helpers are named (tab, extension, GPU, network, audio…) and folded by role; long lists come in pages
+- DevDeck shows what it spends on AI itself, apart from your agents' usage
+- Separate models for the copilot (Sonnet by default) and for automatic analyses (Haiku)
+- Less background work: the hidden launcher and game detection no longer run on every sample
+
 ## 0.1.2
 
 - Game mode: detects games and recommends it; pauses (never closes) what you choose, silences notices, hides the island, and shows the controller in the menu bar, Dock and app

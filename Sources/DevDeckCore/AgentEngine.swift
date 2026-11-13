@@ -60,6 +60,12 @@ public struct AgentCLIBackend: AIBackend {
     public let instructions: String
     public let environment: [String: String]
     public let workingDirectory: URL
+    /// What the call is for, for DevDeck's own usage ledger: "copilot" or "automatic".
+    public var purpose = "copilot"
+
+    private func record(_ usage: [String: Any]?) {
+        OwnUsage.shared.record(purpose: purpose, model: "\(provider.title) · \(model ?? "default")", tokens: OwnUsage.tokens(fromUsage: usage))
+    }
 
     public init(provider: AIProvider, binaryPath: String, model: String?, instructions: String,
                 environment: [String: String], workingDirectory: URL) {
@@ -93,6 +99,7 @@ public struct AgentCLIBackend: AIBackend {
             guard let obj = try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any] else {
                 throw AgentEngineError.failed(L("Claude Code devolvió una respuesta no válida: %@", String(result.prefix(200))))
             }
+            record(obj["usage"] as? [String: Any])
             if (obj["is_error"] as? Bool) == true { throw AgentEngineError.failed((obj["result"] as? String) ?? L("Claude Code falló")) }
             if let structured = obj["structured_output"], let data = try? JSONSerialization.data(withJSONObject: structured) {
                 return try JSONDecoder().decode(AIDiagnosis.self, from: data)
@@ -116,6 +123,7 @@ public struct AgentCLIBackend: AIBackend {
             guard let obj = try? JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any] else {
                 throw AgentEngineError.failed(L("Claude Code devolvió una respuesta no válida"))
             }
+            record(obj["usage"] as? [String: Any])
             if (obj["is_error"] as? Bool) == true { throw AgentEngineError.failed((obj["result"] as? String) ?? L("Claude Code falló")) }
             if let structured = obj["structured_output"], let data = try? JSONSerialization.data(withJSONObject: structured) { return data }
             return Data(Self.jsonBody((obj["result"] as? String) ?? "").utf8)
@@ -166,6 +174,7 @@ public struct AgentCLIBackend: AIBackend {
                                     continuation.yield(text)
                                 }
                             case "result":
+                                record(obj["usage"] as? [String: Any])
                                 if (obj["is_error"] as? Bool) == true {
                                     continuation.yield("\n⚠️ " + ((obj["result"] as? String) ?? L("Claude Code falló")))
                                 } else if !sawDelta, let text = obj["result"] as? String {
@@ -213,6 +222,7 @@ public struct AgentCLIBackend: AIBackend {
             if let item = obj["item"] as? [String: Any], (item["type"] as? String) == "agent_message", let text = item["text"] as? String {
                 message = text
             }
+            if (obj["type"] as? String) == "turn.completed" { record(obj["usage"] as? [String: Any]) }
             if (obj["type"] as? String) == "turn.failed" || (obj["type"] as? String) == "error" {
                 failure = ((obj["error"] as? [String: Any])?["message"] as? String) ?? (obj["message"] as? String)
             }
@@ -268,19 +278,23 @@ public enum AIEngine {
         }
     }
 
-    public static func backend(config: AIConfig, store: JSONStore, env: [String: String]) throws -> AIBackend {
+    public static func backend(config: AIConfig, store: JSONStore, env: [String: String], purpose: String = "copilot") throws -> AIBackend {
         let instructions = OpenAIClient(config: config, apiKey: "").instructions
         switch config.provider {
         case .openAI:
             guard let key = AIKeyProvider.key(config: config, store: store) else { throw AIError.missingKey }
-            return OpenAIClient(config: config, apiKey: key)
+            var client = OpenAIClient(config: config, apiKey: key)
+            client.purpose = purpose
+            return client
         case .claudeCode, .codex:
             let name = config.provider.binary ?? ""
             guard let path = LoginEnvironment.which(name, env: env) else { throw AgentEngineError.notInstalled(name) }
-            return AgentCLIBackend(provider: config.provider, binaryPath: path,
-                                   model: config.provider == .claudeCode ? config.claudeModel : config.codexModel,
-                                   instructions: instructions, environment: env,
-                                   workingDirectory: store.directory.appendingPathComponent("agent-cwd", isDirectory: true))
+            var backend = AgentCLIBackend(provider: config.provider, binaryPath: path,
+                                          model: config.provider == .claudeCode ? config.claudeModel : config.codexModel,
+                                          instructions: instructions, environment: env,
+                                          workingDirectory: store.directory.appendingPathComponent("agent-cwd", isDirectory: true))
+            backend.purpose = purpose
+            return backend
         }
     }
 }

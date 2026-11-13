@@ -47,12 +47,18 @@ Cada tarjeta muestra el resultado al terminar. Al reabrir una conversación del 
 
 ## Instalar
 
+Descarga `DevDeck.zip` de la [última versión](https://github.com/SeanLuis/devdeck/releases/latest), descomprímelo y mueve `DevDeck.app` a Aplicaciones. Está firmada y notarizada por Apple, y funciona en Mac con Apple silicon e Intel (binario universal). Requiere macOS 14 o posterior.
+
+DevDeck comprueba una vez al día si hay versión nueva y te muestra las novedades; nunca instala nada sin tu clic.
+
+### Compilar desde el código
+
 ```bash
 ./scripts/bundle.sh        # compila en release, firma ad-hoc e instala en ~/Applications/DevDeck.app
 open ~/Applications/DevDeck.app
 ```
 
-Requiere macOS 14+ y Xcode 16+ (Swift 6).
+Para compilar: Xcode 16 o posterior (Swift 6). `UNIVERSAL=1 ./scripts/bundle.sh` genera el binario para Apple silicon e Intel.
 
 ## IA
 

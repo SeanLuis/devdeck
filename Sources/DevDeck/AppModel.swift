@@ -135,6 +135,10 @@ final class AppModel {
     var copilotDismissedAt: Int?
     /// The launcher should open straight on the conversation (set by the island).
     var paletteWantsChat = false
+    /// The floating launcher is on screen (its view does no work while hidden).
+    var paletteVisible = false
+    @ObservationIgnored var tickCount = 0
+    var swapRelieving = false
     // Game mode
     var gameMode = false
     /// Name of the game that turned it on (nil when the user did).
@@ -190,6 +194,7 @@ final class AppModel {
         let loaded = store.load("settings.json", as: AppSettings.self) ?? AppSettings()
         settings = loaded
         deckTab = loaded.deckTab
+        if !demo { OwnUsage.shared.use(directory: store.directory) }
         L10n.language = loaded.language
         rules = store.load("rules.json", as: [Rule].self) ?? Rule.defaults
         alerts = store.load("alerts.json", as: [AlertEvent].self) ?? []
@@ -306,8 +311,10 @@ final class AppModel {
         }
 
         swapReport = SwapAnalyzer.analyze(history: systemHistory, snapshot: snap)
+        tickCount += 1
         if !headless {
-            updateGameDetection()
+            // Looking for a game means asking the system for every running app: every few samples is plenty.
+            if gameMode || tickCount % 5 == 1 { updateGameDetection() }
             IslandController.shared.update(model: self)
         }
         // The agents panel shows who is busy right now: keep it fresh while it is on screen.
@@ -808,8 +815,8 @@ final class AppModel {
     /// `fast` forces Claude's small model: automatic analyses do not need a large one and should not make anyone wait.
     func backend(fast: Bool = false) throws -> AIBackend {
         var config = settings.ai
-        if fast, config.provider == .claudeCode { config.claudeModel = "haiku" }
-        return try AIEngine.backend(config: config, store: store, env: loginEnv)
+        if fast, config.provider == .claudeCode { config.claudeModel = config.claudeAutoModel }
+        return try AIEngine.backend(config: config, store: store, env: loginEnv, purpose: fast ? "automatic" : "copilot")
     }
 
     func aiPayload() -> String {

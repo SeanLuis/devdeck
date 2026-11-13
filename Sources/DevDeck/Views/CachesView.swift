@@ -4,7 +4,7 @@ import SwiftUI
 struct CachesView: View {
     @Environment(AppModel.self) private var model
     @State private var kindFilter: CacheKind?
-    @State private var limit = 40
+    @State private var limit = 15
 
     var body: some View {
         let project = filteredProjectCaches
@@ -49,7 +49,7 @@ struct CachesView: View {
                             Divider()
                         }
                         if project.count > limit {
-                            Button(L("Mostrar más (%@)", "\(project.count - limit)")) { limit += 40 }.buttonStyle(.link)
+                            Button(L("Mostrar más (%@)", "\(project.count - limit)")) { limit += 25 }.buttonStyle(.link)
                         }
                     }
                     .padding(6)
