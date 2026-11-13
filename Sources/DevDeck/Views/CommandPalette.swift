@@ -63,16 +63,18 @@ struct CommandPaletteView: View {
             }
         }
         .animation(.snappy(duration: 0.18), value: showActions)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            if model.agentRunning || !model.pendingApprovals.isEmpty || Date().timeIntervalSince(model.chatRequested) < 2 { mode = .chat }
+        }
+        .onChange(of: model.chatToken) { query = ""; showActions = false; mode = .chat }
         .onChange(of: model.paletteToken) {
             query = ""
             selection = 0
             showActions = false
             if mode == .diagnosis && !model.aiBusy { mode = .home }
-            if model.paletteWantsChat {
-                model.paletteWantsChat = false
-                mode = .chat
-            }
+            // Reopened while the copilot works or waits for a decision: go straight back to it.
+            if model.agentRunning || !model.pendingApprovals.isEmpty { mode = .chat }
             focused = true
         }
         .onChange(of: query) { selection = 0; showActions = false }
@@ -263,6 +265,21 @@ struct CommandPaletteView: View {
                                     accessory: L("IA"), primaryLabel: L("Preguntar"), run: { startChat(text) }))
         }
 
+        if !model.conversation.isEmpty {
+            let resume = PaletteItem(id: "resume", section: L("Conversaciones"), icon: "bubble.left.and.text.bubble.right", tint: Theme.tint,
+                                     title: L("Continuar la conversación actual"), subtitle: L("%@ preguntas", "\(model.conversation.filter { $0.kind == .user }.count)"),
+                                     primaryLabel: L("Abrir"), run: { query = ""; mode = .chat })
+            if matches(resume) { list.append(resume) }
+            let fresh = PaletteItem(id: "new", section: L("Conversaciones"), icon: "plus.bubble", tint: Theme.tint, title: L("Nueva conversación"),
+                                    subtitle: L("Guarda la actual en el historial"), primaryLabel: L("Nueva"), run: { model.resetConversation() })
+            if matches(fresh) { list.append(fresh) }
+        }
+        for stored in model.history.prefix(q.isEmpty ? 5 : 30) where stored.id != model.conversationID {
+            let item = PaletteItem(id: "h-\(stored.id)", section: L("Historial"), icon: "clock.arrow.circlepath", tint: Theme.tint, title: stored.title,
+                                   subtitle: relative(stored.date), accessory: L("%@ preguntas", "\(stored.blocks.filter { $0.kind == "user" }.count)"),
+                                   primaryLabel: L("Abrir"), run: { model.open(stored); query = ""; mode = .chat })
+            if matches(item) { list.append(item) }
+        }
         let suggestions: [(String, String)] = [
             (L("¿Por qué va lenta la Mac ahora mismo?"), "speedometer"),
             (L("Analiza mi swap: ¿qué lo llena y cómo lo bajo?"), "memorychip"),
@@ -301,21 +318,6 @@ struct CommandPaletteView: View {
         }
         list += commands.filter(matches)
 
-        if !model.conversation.isEmpty {
-            let resume = PaletteItem(id: "resume", section: L("Conversaciones"), icon: "bubble.left.and.text.bubble.right", tint: Theme.tint,
-                                     title: L("Continuar la conversación actual"), subtitle: L("%@ preguntas", "\(model.conversation.filter { $0.kind == .user }.count)"),
-                                     primaryLabel: L("Abrir"), run: { query = ""; mode = .chat })
-            if matches(resume) { list.append(resume) }
-            let fresh = PaletteItem(id: "new", section: L("Conversaciones"), icon: "plus.bubble", tint: Theme.tint, title: L("Nueva conversación"),
-                                    subtitle: L("Guarda la actual en el historial"), primaryLabel: L("Nueva"), run: { model.resetConversation() })
-            if matches(fresh) { list.append(fresh) }
-        }
-        for stored in model.history.prefix(q.isEmpty ? 5 : 30) where stored.id != model.conversationID {
-            let item = PaletteItem(id: "h-\(stored.id)", section: L("Historial"), icon: "clock.arrow.circlepath", tint: Theme.tint, title: stored.title,
-                                   subtitle: relative(stored.date), accessory: L("%@ preguntas", "\(stored.blocks.filter { $0.kind == "user" }.count)"),
-                                   primaryLabel: L("Abrir"), run: { model.open(stored); query = ""; mode = .chat })
-            if matches(item) { list.append(item) }
-        }
         for group in model.snapshot.groups where group.kind == .project && !group.services.isEmpty {
             let ports = Set(group.ports.map(\.port)).sorted()
             var actions: [PaletteAction] = [
@@ -592,8 +594,12 @@ struct CopilotView: View {
                 Button { PaletteController.shared.show() } label: { Label(L("Abrir flotante"), systemImage: "macwindow.on.rectangle") }
                     .buttonStyle(.bordered)
             }
-            CommandPaletteView(floating: false)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            HStack(alignment: .top, spacing: 12) {
+                CommandPaletteView(floating: false)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                ConversationList()
+                    .frame(width: 300)
+            }
             HStack(spacing: 14) {
                 Label(L("Piloto automático"), systemImage: "airplane").font(.system(.callout).weight(.semibold))
                 Picker("", selection: $model.settings.ai.autopilot) {
@@ -632,5 +638,63 @@ struct PaletteSurface: ViewModifier {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.glassStroke, lineWidth: 1))
         }
+    }
+}
+
+/// Every saved conversation, always in view next to the copilot: the one in progress first.
+struct ConversationList: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(L("Conversaciones").uppercased()).font(.system(size: 11, weight: .semibold)).kerning(0.4).foregroundStyle(Theme.tertiaryText)
+                Spacer()
+                Button { model.resetConversation(); model.paletteToken = UUID() } label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless).help(L("Nueva conversación")).disabled(model.conversation.isEmpty)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(model.history) { stored in
+                        let current = stored.id == model.conversationID
+                        let pending = stored.blocks.filter { $0.kind == "action" && ($0.approval ?? "pending") == "pending" }.count
+                        Button {
+                            if !current { model.open(stored) }
+                            model.showConversation()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    if current && model.agentRunning { ProgressView().controlSize(.mini) }
+                                    Text(stored.title).font(.system(size: 13, weight: current ? .semibold : .regular)).lineLimit(2).multilineTextAlignment(.leading)
+                                }
+                                HStack(spacing: 6) {
+                                    Text(relative(stored.date)).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                                    if current && model.agentRunning {
+                                        Text(L("trabajando")).font(.system(size: 11)).foregroundStyle(Theme.success)
+                                    } else if pending > 0 {
+                                        Text(plural(pending, "%d decisión pendiente", "%d decisiones pendientes")).font(.system(size: 11)).foregroundStyle(Theme.warning)
+                                    } else if !stored.blocks.contains(where: { $0.kind == "answer" }) {
+                                        Text(L("sin respuesta")).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(Theme.ink(current ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if model.history.isEmpty {
+                        Text(L("Aquí aparecerán tus preguntas al copiloto, también las que hagas desde el lanzador."))
+                            .font(.system(size: 12)).foregroundStyle(Theme.tertiaryText).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .glass(cornerRadius: 12)
     }
 }

@@ -450,7 +450,7 @@ struct CopilotBoard: View {
             }
             HStack(spacing: 8) {
                 Button(conversation.isEmpty ? L("Preguntar al copiloto") : L("Abrir la conversación")) {
-                    model.paletteWantsChat = !conversation.isEmpty
+                    if !conversation.isEmpty { model.showConversation() }
                     model.deckOpen = false
                     IslandController.shared.update(model: model)
                     PaletteController.shared.show()

@@ -81,6 +81,8 @@ extension AppModel {
         agentRunning = true
         defer { agentRunning = false; saveConversation() }
         conversation.append(AgentItem(kind: .user, text: question))
+        // Saved from the first moment and after every turn: a question must never be lost if the window closes or the app quits.
+        saveConversation()
         var transcript: [String] = conversation.compactMap { item in
             switch item.kind {
             case .user: return "Usuario: \(item.text)"
@@ -131,6 +133,7 @@ extension AppModel {
                 }
             }
             transcript.append("Turno \(turn + 1) · pensamiento: \(step.thought)")
+            saveConversation()
 
             var ranReadTool = false
             for call in step.tool_calls.prefix(4) {

@@ -135,6 +135,15 @@ final class AppModel {
     var copilotDismissedAt: Int?
     /// The launcher should open straight on the conversation (set by the island).
     var paletteWantsChat = false
+    /// Changes whenever something asks the launcher (floating or embedded) to show the conversation.
+    var chatToken = UUID()
+    @ObservationIgnored var chatRequested = Date.distantPast
+
+    /// Shows the current conversation in the copilot, wherever it is open.
+    func showConversation() {
+        chatRequested = Date()
+        chatToken = UUID()
+    }
     var notchWidth: CGFloat = 0
     var notchHeight: CGFloat = 0
     @ObservationIgnored var islandTask: Task<Void, Never>?
@@ -284,7 +293,8 @@ final class AppModel {
         capturedRoots.formIntersection(live)
         reportVanishedServices(live: live)
         for group in snap.groups where group.kind == .project {
-            for service in group.services where knownServices[service.rootPid] == nil {
+            // Only real servers (something listening on a port): one-off commands such as a build, tsc or tail end by themselves.
+            for service in group.services where knownServices[service.rootPid] == nil && !service.ports.isEmpty {
                 knownServices[service.rootPid] = (service.label, group.name, Date())
             }
         }
@@ -302,7 +312,7 @@ final class AppModel {
             knownServices[pid] = nil
             // Still running but no longer a "service" (e.g. it stopped listening): not a shutdown.
             if snapshot.processes[pid] != nil { continue }
-            if expectedExits.remove(pid) != nil || Date().timeIntervalSince(info.since) < 20 { continue }
+            if expectedExits.remove(pid) != nil || Date().timeIntervalSince(info.since) < 60 { continue }
             let cause = Self.watchdogKill(within: 90)
             let message = cause.map { L("%@ (%@) se cerró. Lo cerró el vigilante de RAM: %@", info.label, info.project, $0) }
                 ?? L("%@ (%@) se cerró y no fue DevDeck. Puedes volver a arrancarlo desde Proyectos.", info.label, info.project)
