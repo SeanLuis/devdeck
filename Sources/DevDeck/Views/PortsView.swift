@@ -76,7 +76,7 @@ struct PortRow: View {
                     .foregroundStyle(binding.isLoopbackOnly ? Theme.tertiaryText : Theme.warning)
             }
             .frame(width: 96, alignment: .leading)
-            KindIcon(kind: binding.groupKind, size: 26)
+            if let group = model.snapshot.group(binding.groupID) { GroupIcon(group: group, size: 26) } else { KindIcon(kind: binding.groupKind, size: 26) }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(binding.groupName).font(.system(.body).weight(.semibold)).lineLimit(1)

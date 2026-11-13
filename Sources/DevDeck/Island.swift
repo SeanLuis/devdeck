@@ -212,7 +212,7 @@ struct IslandView: View {
         VStack(spacing: 5) {
             ForEach(model.snapshot.groups.prefix(3)) { group in
                 HStack(spacing: 8) {
-                    Image(systemName: group.kind.symbol).font(.system(size: 10)).frame(width: 16).opacity(0.7)
+                    GroupIcon(group: group, size: 16)
                     Text(group.name).font(.system(size: 12)).lineLimit(1)
                     Spacer()
                     Text(Fmt.bytes(group.memoryBytes)).font(.system(size: 12).monospacedDigit()).opacity(0.7)

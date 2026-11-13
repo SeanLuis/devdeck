@@ -58,7 +58,7 @@ struct GroupRow: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .foregroundStyle(Theme.secondaryText)
                     .frame(width: 12)
-                KindIcon(kind: group.kind, size: 26)
+                GroupIcon(group: group, size: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(group.name).font(.callout.weight(.semibold))

@@ -89,6 +89,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var islandEnabled = true
     /// When the island is on screen: "always" | "auto" (only while something needs attention) | "off".
     public var islandMode = "always"
+    /// App and agent icons: "color" | "mono" (desaturated) | "symbols" (no logos).
+    public var iconStyle = "color"
     /// Board the island opens on: "system" | "agents" | "accounts" | "copilot".
     public var deckTab = "system"
     /// Global launcher shortcut (Carbon key code + modifiers) and its printable label.
@@ -112,6 +114,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         islandEnabled = try c.decodeIfPresent(Bool.self, forKey: .islandEnabled) ?? d.islandEnabled
         islandMode = try c.decodeIfPresent(String.self, forKey: .islandMode) ?? (islandEnabled ? "always" : "off")
         deckTab = try c.decodeIfPresent(String.self, forKey: .deckTab) ?? d.deckTab
+        iconStyle = try c.decodeIfPresent(String.self, forKey: .iconStyle) ?? d.iconStyle
         hotKeyCode = try c.decodeIfPresent(Int.self, forKey: .hotKeyCode) ?? d.hotKeyCode
         hotKeyModifiers = try c.decodeIfPresent(Int.self, forKey: .hotKeyModifiers) ?? d.hotKeyModifiers
         hotKeyLabel = try c.decodeIfPresent(String.self, forKey: .hotKeyLabel) ?? d.hotKeyLabel

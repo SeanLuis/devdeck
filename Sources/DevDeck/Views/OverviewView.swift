@@ -166,7 +166,7 @@ struct TopConsumersList: View {
         VStack(spacing: 10) {
             ForEach(model.snapshot.groups.prefix(limit)) { group in
                 HStack(spacing: 12) {
-                    KindIcon(kind: group.kind, size: 28)
+                    GroupIcon(group: group, size: 28)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(group.name).font(.system(.callout).weight(.medium)).lineLimit(1)

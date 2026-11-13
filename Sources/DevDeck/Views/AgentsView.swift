@@ -104,6 +104,7 @@ struct AgentWorkPanel: View {
                     if index > 0 { Divider().overlay(Theme.ink(0.05)) }
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
+                            AgentIcon(name: entry.agent, size: 18)
                             Text(entry.agent).font(.system(size: 13, weight: .semibold))
                             let busy = entry.rows.filter { $0.state == .working }.count
                             Text(busy > 0 ? L("%d de %d trabajando", busy, entry.rows.count) : L("%d en espera", entry.rows.count))
@@ -269,6 +270,7 @@ struct AccountRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
+            AgentIcon(name: account.agent, size: 24)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(account.email).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
@@ -377,7 +379,7 @@ struct AgentCard: View {
         let group = model.snapshot.groups.first { $0.kind == .agent && $0.name.lowercased().hasPrefix(install.name.lowercased().prefix(5)) }
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                IconTile(symbol: "terminal", size: 28, active: group != nil)
+                AgentIcon(name: install.name, size: 28, active: group != nil)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(install.name).font(.system(size: 14, weight: .semibold))
                     Text(install.installed ? (install.version ?? install.binary) : group != nil ? L("aplicación") : L("solo datos, sin CLI")).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(1)

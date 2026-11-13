@@ -48,6 +48,7 @@ DevDeck does. It is built for the way developers work now: several dev servers, 
 
 - **Working now**: every open session with its folder, whether it is working or idle, RAM, CPU, tokens, and the **subagents** it spawned.
 - **Accounts and limits**: your Claude Code accounts with their 5-hour, 7-day and per-model usage, and account switching with confirmation (through [claude-swap](https://github.com/realiti4/claude-swap) when installed). Codex account and plan.
+- **Real icons** for apps and agents, taken from what is installed on your Mac; in colour, grey, or plain symbols.
 - **Tokens** per day, per hour, per model and per project for **Claude Code, Codex, Devin, OpenCode and Gemini CLI**, read incrementally from what each agent logs locally.
 
 <img src="docs/screenshots/agents.png" alt="AI agents" width="900">

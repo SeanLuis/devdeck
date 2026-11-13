@@ -55,7 +55,7 @@ struct MenuBarView: View {
                 let total = Double(max(s.memTotal, 1))
                 ForEach(model.snapshot.groups.prefix(4)) { group in
                     HStack(spacing: 10) {
-                        KindIcon(kind: group.kind, size: 22)
+                        GroupIcon(group: group, size: 22)
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
                                 Text(group.name).font(.system(.callout)).lineLimit(1)

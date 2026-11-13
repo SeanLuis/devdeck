@@ -137,6 +137,14 @@ struct SettingsView: View {
                         }
                         .pickerStyle(.segmented).labelsHidden().frame(width: 240)
                     }
+                    row(L("Iconos de apps y agentes"), L("Usa el icono real de cada aplicación instalada, en color o en gris, o solo símbolos")) {
+                        Picker("", selection: $model.settings.iconStyle) {
+                            Text(L("Color")).tag("color")
+                            Text(L("Gris")).tag("mono")
+                            Text(L("Símbolos")).tag("symbols")
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 240)
+                    }
                     row(L("Atajo del lanzador"), L("Abre el copiloto desde cualquier app. Haz clic y pulsa la combinación nueva")) {
                         HotKeyRecorder()
                     }

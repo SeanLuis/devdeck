@@ -276,7 +276,7 @@ struct OffloadedList: View {
             VStack(spacing: 10) {
                 ForEach(groups) { group in
                     HStack(spacing: 12) {
-                        KindIcon(kind: group.kind, size: 26)
+                        GroupIcon(group: group, size: 26)
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(group.name).font(.system(.callout).weight(.medium)).lineLimit(1)
@@ -319,7 +319,7 @@ struct ReliefPlanView: View {
                     .font(.callout).foregroundStyle(Theme.secondaryText)
                 ForEach(report.reliefPlan) { group in
                     HStack(spacing: 10) {
-                        KindIcon(kind: group.kind, size: 24)
+                        GroupIcon(group: group, size: 24)
                         Text(group.name).font(.system(.callout).weight(.medium))
                         Spacer()
                         Text(Fmt.bytes(group.memoryBytes)).monospacedDigit().foregroundStyle(Theme.secondaryText)

@@ -141,7 +141,7 @@ struct SystemBoard: View {
                 let total = Double(max(s.memTotal, 1))
                 ForEach(model.snapshot.groups.prefix(5)) { group in
                     HStack(spacing: 8) {
-                        Image(systemName: group.kind.symbol).font(.system(size: 10)).frame(width: 16).opacity(0.7)
+                        GroupIcon(group: group, size: 16)
                         Text(group.name).font(.system(size: 12)).lineLimit(1).frame(width: 150, alignment: .leading)
                         UsageBar(fraction: Double(group.memoryBytes) / total, tint: Theme.tint)
                         Text(Fmt.bytes(group.memoryBytes)).font(.system(size: 11).monospacedDigit()).opacity(0.7).frame(width: 66, alignment: .trailing)
@@ -271,7 +271,10 @@ struct AgentsBoard: View {
                 ForEach(report.agents.prefix(4), id: \.self) { agent in
                     let day = report.total(agent: agent, day: today)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(agent).font(.system(size: 10, weight: .medium)).opacity(0.5).lineLimit(1)
+                        HStack(spacing: 5) {
+                            AgentIcon(name: agent, size: 14)
+                            Text(agent).font(.system(size: 10, weight: .medium)).opacity(0.5).lineLimit(1)
+                        }
                         Text(day.messages > 0 ? compact(day.billable) : "—").font(.system(size: 14, weight: .semibold).monospacedDigit())
                         Text(L("hoy · %@ en 5 h", compact(report.recent(agent: agent, hours: 5).billable))).font(.system(size: 10)).opacity(0.5).lineLimit(1)
                     }
@@ -284,6 +287,7 @@ struct AgentsBoard: View {
                 ForEach(work.live.sorted { ($0.state == .working ? 0 : 1, -Double($0.load?.memoryBytes ?? 0)) < ($1.state == .working ? 0 : 1, -Double($1.load?.memoryBytes ?? 0)) }.prefix(6)) { row in
                     HStack(spacing: 8) {
                         Circle().fill(row.state == .working ? Theme.success : Theme.ink(0.3)).frame(width: 6, height: 6)
+                        AgentIcon(name: row.agent, size: 18)
                         VStack(alignment: .leading, spacing: 0) {
                             Text(row.folderName.isEmpty ? (row.name ?? L("Aplicación y servicios")) : row.folderName).font(.system(size: 12, weight: .medium)).lineLimit(1)
                             Text([row.agent, row.model].filter { !$0.isEmpty }.joined(separator: " · ")).font(.system(size: 10)).opacity(0.5).lineLimit(1)
@@ -336,7 +340,8 @@ struct AccountsBoard: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(report.accounts) { account in
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        AgentIcon(name: account.agent, size: 22)
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 6) {
                                 Text(account.email).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
