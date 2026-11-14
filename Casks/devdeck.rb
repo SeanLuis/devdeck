@@ -1,6 +1,6 @@
 cask "devdeck" do
-  version "0.1.6"
-  sha256 "a1be09a37adbccf162ce16cc3cd689a573f03862605e269126d2aa06cca25c22"
+  version "0.1.7"
+  sha256 "5653a746536dd782b1b1cc8f5b566df2497acdced63063f99ef13a72a1fd122d"
 
   url "https://github.com/SeanLuis/devdeck/releases/download/v#{version}/DevDeck.zip"
   name "DevDeck"
