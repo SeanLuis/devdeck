@@ -10,8 +10,18 @@ struct MenuBarLabel: View {
             Image(systemName: model.gameMode ? "gamecontroller.fill"
                   : model.swapReport.thrashing || s.pressure >= 4 ? "exclamationmark.triangle.fill"
                   : s.pressure >= 2 ? "memorychip.fill" : "memorychip")
-            Text(model.hasSample ? "\(Int(s.memPercent))%" : "—").monospacedDigit()
+            // One image and one text: the menu bar draws nothing more from a label. After the memory figure,
+            // the agent account in use and how far its 5-hour window has gone, always in sight.
+            Text(title(s)).monospacedDigit()
         }
+    }
+}
+
+extension MenuBarLabel {
+    func title(_ s: SystemSample) -> String {
+        let memory = model.hasSample ? "\(Int(s.memPercent))%" : "—"
+        guard let window = model.activeAccountWindow else { return memory }
+        return memory + "  ✦ \(Int(window.percent.rounded()))%"
     }
 }
 
@@ -50,6 +60,8 @@ struct MenuBarView: View {
                 .background(Color.severity(insight.severity).opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .onTapGesture { open(.memory) }
             }
+
+            MenuBarAccounts()
 
             section(L("Qué consume más"))
             VStack(spacing: 8) {
@@ -180,5 +192,58 @@ struct MenuBarView: View {
         model.selectedSection = section
         openWindow(id: "main")
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// The Claude Code accounts in the top-bar popover: the one in use with its limits, and the rest one click away.
+struct MenuBarAccounts: View {
+    @Environment(AppModel.self) private var model
+    @State private var asking: String?
+
+    var body: some View {
+        let accounts = model.accounts.accounts(of: "Claude Code")
+        if accounts.contains(where: { !$0.windows.isEmpty }) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("Cuenta del agente").uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiaryText)
+                VStack(spacing: 7) {
+                    ForEach(accounts) { account in row(account) }
+                }
+                .padding(10)
+                .glass(cornerRadius: 12)
+            }
+        }
+    }
+
+    @ViewBuilder private func row(_ account: AgentAccount) -> some View {
+        let short = account.windows.first { $0.name == "5 h" }
+        let week = account.windows.first { $0.name == "7 días" }
+        HStack(spacing: 8) {
+            Circle().fill(account.active ? Theme.success : Theme.ink(0.18)).frame(width: 6, height: 6)
+            Text(account.alias ?? account.email).font(.system(size: 12, weight: account.active ? .semibold : .regular)).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 6)
+            if asking == account.id {
+                Button(L("Cambiar")) { asking = nil; Task { await model.switchClaudeAccount(account) } }.buttonStyle(.borderedProminent).controlSize(.small)
+                Button(L("No")) { asking = nil }.buttonStyle(.bordered).controlSize(.small)
+            } else {
+                if let short { figure("5 h", short.percent) }
+                if let week { figure(L("7 días"), week.percent) }
+                if model.switchingAccount == account.id {
+                    ProgressView().controlSize(.small).frame(width: 44)
+                } else if !account.active, account.number != nil, account.vaultID != nil || model.accounts.switcherPath != nil {
+                    Button(L("Usar")) { asking = account.id }.buttonStyle(.bordered).controlSize(.small).frame(width: 44)
+                        .disabled(model.switchingAccount != nil)
+                } else {
+                    Color.clear.frame(width: 44, height: 1)
+                }
+            }
+        }
+    }
+
+    private func figure(_ name: String, _ percent: Double) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text("\(Int(percent.rounded()))%").font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.level(percent / 100) == Theme.tint ? Color.primary : Theme.level(percent / 100))
+            Text(name).font(.system(size: 8, weight: .medium)).foregroundStyle(Theme.tertiaryText)
+        }
+        .frame(width: 34, alignment: .trailing)
     }
 }

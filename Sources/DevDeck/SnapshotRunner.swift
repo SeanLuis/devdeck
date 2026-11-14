@@ -96,7 +96,8 @@ enum SnapshotRunner {
                 }
                 await render(RootView().environment(model).appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 1400, height: height), to: "\(outDir)/\(section.rawValue).png")
             }
-            await render(MenuBarView().environment(model).appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 384, height: 760), to: "\(outDir)/menubar.png")
+            await render(MenuBarView().environment(model).appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 384, height: 900), to: "\(outDir)/menubar.png")
+            await render(MenuBarLabel().environment(model).padding(8).background(Color.black).environment(\.colorScheme, .dark), size: CGSize(width: 190, height: 36), to: "\(outDir)/menubar-label.png")
             await render(CommandPaletteView(floating: true).environment(model).appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 780, height: 540), to: "\(outDir)/palette.png")
             print("snapshots written to \(outDir)")
             exit(0)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+- The menu bar shows how far the agent account in use has gone in its 5-hour window, next to memory
+- The menu bar panel lists your Claude Code accounts with their limits and switches between them
+- The Advanced section of AI settings opens from its title
+
 ## 0.1.6
 
 - Near the limit, Claude Code can switch by itself to the saved account with the most room (the default, at 90%), only suggest it, or do nothing; any account can be left out

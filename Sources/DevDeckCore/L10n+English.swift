@@ -1164,5 +1164,7 @@ extension L10n {
         "DevDeck no propone ni cambia de cuenta.": "DevDeck neither proposes nor switches accounts.",
         "Excluir del cambio automático": "Leave out of automatic switching",
         "sin cambio automático": "no automatic switching",
+        "Cuenta del agente": "Agent account",
+        "No": "No",
     ]
 }

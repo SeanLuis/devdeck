@@ -151,6 +151,12 @@ extension AppModel {
         saveSettings()
     }
 
+    /// The 5-hour window of the Claude Code account in use (or its first window), for the menu bar.
+    var activeAccountWindow: UsageWindow? {
+        guard let active = accounts.accounts.first(where: { $0.agent == "Claude Code" && $0.active }) else { return nil }
+        return active.windows.first { $0.name == "5 h" } ?? active.windows.first
+    }
+
     /// Open Claude Code sessions: they keep the login they started with until they are restarted.
     var openClaudeSessions: Int { liveSessions.filter { snapshot.processes[$0.pid] != nil }.count }
 
