@@ -20,8 +20,8 @@ struct MenuBarLabel: View {
 extension MenuBarLabel {
     func title(_ s: SystemSample) -> String {
         let memory = model.hasSample ? "\(Int(s.memPercent))%" : "—"
-        guard let window = model.activeAccountWindow else { return memory }
-        return memory + "  ✦ \(Int(window.percent.rounded()))%"
+        guard let account = model.menuBarAccountTitle else { return memory }
+        return memory + "  " + account
     }
 }
 
@@ -202,11 +202,24 @@ struct MenuBarAccounts: View {
 
     var body: some View {
         let accounts = model.accounts.accounts(of: "Claude Code")
-        if accounts.contains(where: { !$0.windows.isEmpty }) {
+        if accounts.contains(where: { !$0.windows.isEmpty || ($0.active && $0.note != nil) }) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(L("Cuenta del agente").uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiaryText)
-                VStack(spacing: 7) {
-                    ForEach(accounts) { account in row(account) }
+                HStack(spacing: 6) {
+                    Text(L("Cuenta del agente").uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiaryText)
+                    Spacer()
+                    if let read = accounts.first(where: \.active)?.usageFetched {
+                        Text(L("leído %@", relative(read))).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
+                    }
+                    Button { Task { await model.refreshAccounts(force: true) } } label: { Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .semibold)) }
+                        .buttonStyle(.plain).foregroundStyle(Theme.secondaryText).help(L("Actualizar"))
+                }
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(accounts) { account in
+                        row(account)
+                        if account.active, let detail = resets(account) {
+                            Text(detail).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText).lineLimit(1).padding(.leading, 14)
+                        }
+                    }
                 }
                 .padding(10)
                 .glass(cornerRadius: 12)
@@ -237,6 +250,16 @@ struct MenuBarAccounts: View {
                 }
             }
         }
+    }
+
+    /// "5 h reinicia en 3 h · 7 días reinicia en 5 d" for the account in use.
+    private func resets(_ account: AgentAccount) -> String? {
+        let parts = ["5 h", "7 días"].compactMap { name -> String? in
+            guard let resets = account.windows.first(where: { $0.name == name })?.resetsAt, resets > Date() else { return nil }
+            return L(name) + " " + L("reinicia %@", relative(resets))
+        }
+        if parts.isEmpty { return account.note.map { L($0) } }
+        return parts.joined(separator: " · ")
     }
 
     private func figure(_ name: String, _ percent: Double) -> some View {

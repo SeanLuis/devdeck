@@ -106,6 +106,7 @@ final class AppModel {
     @ObservationIgnored var waitTracker = AgentWaitTracker()
     @ObservationIgnored var suggestedSwitches: Set<String> = []
     @ObservationIgnored var lastAutoSwitch: Date = .distantPast
+    @ObservationIgnored var lastClaudeTokens: Double = -1
     var availableProviders: [AIProvider] = []
     var notificationStatus = "desconocido"
     var notificationsAllowed = false

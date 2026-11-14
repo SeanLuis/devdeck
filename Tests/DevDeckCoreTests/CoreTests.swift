@@ -780,3 +780,48 @@ struct CustomRecipeTests {
         #expect(Toolkit.parseCustom(Data("{}".utf8)).isEmpty)
     }
 }
+
+@Suite struct MenuBarAccountTests {
+    @Test func titleShowsBothWindowsAndWarns() {
+        let now = Date()
+        let later = now.addingTimeInterval(3600)
+        let calm = [UsageWindow(name: "5 h", percent: 2.4, resetsAt: later), UsageWindow(name: "7 días", percent: 54, resetsAt: later)]
+        #expect(AgentAccount.menuBarTitle(windows: calm, warnAt: 90, now: now) == "✦ 2% · 54%")
+        let hot = [UsageWindow(name: "5 h", percent: 93, resetsAt: later), UsageWindow(name: "7 días", percent: 54, resetsAt: later)]
+        #expect(AgentAccount.menuBarTitle(windows: hot, warnAt: 90, now: now) == "! 93% · 54%")
+        let reset = [UsageWindow(name: "5 h", percent: 80, resetsAt: now.addingTimeInterval(-60)), UsageWindow(name: "7 días", percent: 54, resetsAt: later)]
+        #expect(AgentAccount.menuBarTitle(windows: reset, warnAt: 90, now: now) == "✦ — · 54%")
+        #expect(AgentAccount.menuBarTitle(windows: [], warnAt: 90, now: now) == nil)
+    }
+
+    @Test func activeAccountIsReadSoonerWhileTheAgentWorks() {
+        let now = Date()
+        func due(_ ago: TimeInterval, active: Bool, busy: Bool, backoff: TimeInterval? = nil, entry: AccountUsage? = nil) -> Bool {
+            AccountUsageService.isDue(last: now.addingTimeInterval(-ago), entry: entry, active: active, busy: busy, backoff: backoff,
+                                      interval: 300, activeInterval: 90, now: now)
+        }
+        #expect(due(100, active: true, busy: true))
+        #expect(!due(100, active: true, busy: false))
+        #expect(!due(100, active: false, busy: true))
+        #expect(due(301, active: false, busy: false))
+        #expect(!due(400, active: true, busy: true, backoff: 600))
+        var old = AccountUsage()
+        old.windows = [.init(name: "5 h", percent: 80, resetsAt: now.addingTimeInterval(-10))]
+        #expect(due(61, active: false, busy: false, entry: old))
+        #expect(AccountUsageService.isDue(last: nil, entry: nil, active: false, busy: false, backoff: nil, interval: 300, activeInterval: 90, now: now))
+    }
+
+    @Test func unsavedLoginKeepsItsOwnReading() async throws {
+        let home = NSTemporaryDirectory() + "devdeck-live-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try #"{"oauthAccount":{"emailAddress":"Solo@Example.com"}}"#.write(toFile: home + "/.claude.json", atomically: true, encoding: .utf8)
+        var reading = AccountUsage()
+        reading.windows = [.init(name: "5 h", percent: 12, resetsAt: Date().addingTimeInterval(3600))]
+        reading.fetchedAt = Date()
+        let report = await AgentAccounts.load(env: [:], codexPlan: nil, home: home, usage: [AccountUsageService.liveKey("solo@example.com"): reading])
+        let account = try #require(report.accounts(of: "Claude Code").first)
+        #expect(account.active)
+        #expect(account.windows.first?.percent == 12)
+    }
+}

@@ -21,6 +21,17 @@ extension AgentAccount {
     /// A reading older than this is shown as old: the figure may no longer be true.
     public static let staleAfter: TimeInterval = 900
 
+    /// The menu bar's text for the account in use: "✦ 12% · 54%" (5-hour window, then the week). A window that
+    /// has already reset shows "—" instead of an old figure, and "!" leads when either is past `warnAt`.
+    public static func menuBarTitle(windows: [UsageWindow], warnAt: Double, now: Date = Date()) -> String? {
+        let shown = ["5 h", "7 días"].compactMap { name in windows.first { $0.name == name } }
+        guard !shown.isEmpty else { return nil }
+        let live = shown.filter { ($0.resetsAt ?? .distantFuture) > now }
+        let figures = shown.map { w in live.contains(w) ? "\(Int(w.percent.rounded()))%" : "—" }
+        let hot = live.contains { $0.percent >= warnAt }
+        return (hot ? "! " : "✦ ") + figures.joined(separator: " · ")
+    }
+
     public func isStale(now: Date = Date()) -> Bool {
         guard !windows.isEmpty, let read = usageFetched else { return false }
         return now.timeIntervalSince(read) > Self.staleAfter
@@ -89,7 +100,13 @@ public enum AgentAccounts {
     public static func load(env: [String: String], codexPlan: CodexPlan?, home: String = NSHomeDirectory(),
                             vault: AccountVault? = nil, usage: [String: AccountUsage] = [:]) async -> AccountsReport {
         var report = AccountsReport()
-        let profile = claudeProfile(home: home)
+        var profile = claudeProfile(home: home)
+        // The login in use, when it is not a saved account, still has its own reading.
+        if let email = profile?.email, let reading = usage[AccountUsageService.liveKey(email)] {
+            profile?.windows = reading.usageWindows()
+            profile?.usageFetched = reading.fetchedAt
+            profile?.note = reading.note
+        }
         if let vault {
             let own = native(vault: vault, usage: usage)
             if !own.isEmpty {

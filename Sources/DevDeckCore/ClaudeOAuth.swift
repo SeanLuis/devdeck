@@ -121,6 +121,24 @@ public actor AccountUsageService {
     private let url: URL?
     /// Seconds between two readings of the same account.
     public var interval: TimeInterval = 300
+    /// The account in use moves while the agent works: read it this often when tokens were just spent.
+    public var activeInterval: TimeInterval = 90
+    /// Longest wait after the account keeps answering "too many requests".
+    public var maxBackoff: TimeInterval = 1800
+    /// Extra wait per account after a "too many requests" answer; doubles each time, cleared by a good read.
+    private var backoff: [String: TimeInterval] = [:]
+
+    /// Whether an account's reading should be asked again now.
+    static func isDue(last: Date?, entry: AccountUsage?, active: Bool, busy: Bool, backoff: TimeInterval?,
+                      interval: TimeInterval, activeInterval: TimeInterval, now: Date) -> Bool {
+        guard let last else { return true }
+        let waited = now.timeIntervalSince(last)
+        if let backoff { return waited >= backoff }
+        // A window that has reset since the reading: the figure on screen is no longer true.
+        let expired = entry?.windows.contains { ($0.resetsAt ?? .distantFuture) <= now } ?? false
+        if expired, waited >= min(60, activeInterval) { return true }
+        return waited >= (active && busy ? activeInterval : interval)
+    }
 
     public init(directory: URL?) {
         url = directory?.appendingPathComponent("account-usage.json")
@@ -141,16 +159,21 @@ public actor AccountUsageService {
     }
 
     /// Updates the readings that are due. `force` ignores the interval (the user pressed "Actualizar").
-    public func refresh(vault: AccountVault, force: Bool = false, now: Date = Date()) async -> [String: AccountUsage] {
+    /// `busy`: the agent spent tokens since the last call, so the account in use is read at the short interval.
+    public func refresh(vault: AccountVault, force: Bool = false, busy: Bool = false, now: Date = Date()) async -> [String: AccountUsage] {
         let accounts = vault.accounts().filter { $0.agent == AccountVault.claude }
-        cache = cache.filter { entry in accounts.contains { $0.id == entry.key } }
+        // A login that was never saved as an account is read too, under its own key: someone with a single
+        // Claude Code login sees their limits without saving anything first.
+        let unsavedLive = vault.activeAccount() == nil ? vault.liveIdentity().map { Self.liveKey($0.email) } : nil
+        cache = cache.filter { entry in entry.key == unsavedLive || accounts.contains { $0.id == entry.key } }
         for (id, renewed) in unsaved where (try? vault.commitRefresh(renewed, for: id)) != nil { unsaved[id] = nil }
         for account in accounts {
-            if !force, let last = lastAttempt[account.id], now.timeIntervalSince(last) < interval { continue }
-            lastAttempt[account.id] = now
-            var entry = cache[account.id] ?? AccountUsage()
             // Asked again for every account: the user may switch while the previous one was on the network.
             let isActive = account.id == vault.activeAccount()?.id
+            if !force, !Self.isDue(last: lastAttempt[account.id], entry: cache[account.id], active: isActive, busy: busy,
+                                   backoff: backoff[account.id], interval: interval, activeInterval: activeInterval, now: now) { continue }
+            lastAttempt[account.id] = now
+            var entry = cache[account.id] ?? AccountUsage()
             // The login in use belongs to Claude Code: read it, never renew it from here.
             var credentials = isActive ? vault.liveCredentials() : (unsaved[account.id] ?? vault.credentials(for: account))
             if !isActive, let saved = credentials, ClaudeCredential.isExpired(saved) {
@@ -194,13 +217,42 @@ public actor AccountUsageService {
                 entry.windows = windows
                 entry.fetchedAt = now
                 entry.note = nil
+                backoff[account.id] = nil
             case .failure(.unauthorized): entry.note = isActive ? "se actualizará cuando uses Claude Code" : "sesión caducada: vuelve a iniciar sesión"
-            case .failure(.rateLimited): entry.note = "límite de consultas; se reintenta luego"
+            case .failure(.rateLimited):
+                entry.note = "límite de consultas; se reintenta luego"
+                backoff[account.id] = min((backoff[account.id] ?? interval) * 2, maxBackoff)
             case .failure(.network): entry.note = "sin conexión"
             }
             cache[account.id] = entry
         }
+        if let key = unsavedLive, force || Self.isDue(last: lastAttempt[key], entry: cache[key], active: true, busy: busy, backoff: backoff[key],
+                                                    interval: interval, activeInterval: activeInterval, now: now) {
+            lastAttempt[key] = now
+            var entry = cache[key] ?? AccountUsage()
+            let credentials = vault.liveCredentials()
+            if let token = ClaudeCredential.accessToken(credentials), !ClaudeCredential.isExpired(credentials, margin: 0) {
+                switch await ClaudeOAuth.usage(accessToken: token) {
+                case .success(let windows):
+                    entry.windows = windows
+                    entry.fetchedAt = now
+                    entry.note = nil
+                    backoff[key] = nil
+                case .failure(.unauthorized): entry.note = "se actualizará cuando uses Claude Code"
+                case .failure(.rateLimited):
+                    entry.note = "límite de consultas; se reintenta luego"
+                    backoff[key] = min((backoff[key] ?? interval) * 2, maxBackoff)
+                case .failure(.network): entry.note = "sin conexión"
+                }
+            } else {
+                entry.note = credentials == nil ? nil : "se actualizará cuando uses Claude Code"
+            }
+            cache[key] = entry
+        }
         persist()
         return cache
     }
+
+    /// Key of the reading that belongs to a login in use that is not a saved account.
+    public static func liveKey(_ email: String) -> String { "live|" + email.lowercased() }
 }

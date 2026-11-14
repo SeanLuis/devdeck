@@ -377,3 +377,23 @@ struct CodexLimitsTests {
         #expect(!account.isStale())
     }
 }
+
+@Suite("Unsaved login")
+struct UnsavedLoginTests {
+    @Test func aLoginThatWasNeverSavedIsStillFollowed() async throws {
+        let box = try VaultSandbox()
+        let config = ["oauthAccount": VaultSandbox.profile("solo@example.com", org: "o1")]
+        try JSONSerialization.data(withJSONObject: config).write(to: URL(fileURLWithPath: box.home + "/.claude.json"))
+        // Expired on purpose: the reading is not asked for, so nothing leaves the test.
+        try box.keychain.set(service: AccountVault.claudeService, account: "tester", secret: VaultSandbox.login("solo", expiresIn: -60))
+        #expect(box.vault.accounts().isEmpty)
+        let service = AccountUsageService(directory: nil)
+        let readings = await service.refresh(vault: box.vault)
+        #expect(readings[AccountUsageService.liveKey("Solo@Example.com")]?.note == "se actualizará cuando uses Claude Code")
+        // Once it is a saved account, the loose reading goes away.
+        try box.keychain.set(service: AccountVault.claudeService, account: "tester", secret: VaultSandbox.login("solo", expiresIn: -60))
+        try box.vault.addCurrent()
+        let after = await service.refresh(vault: box.vault, force: true)
+        #expect(after[AccountUsageService.liveKey("solo@example.com")] == nil)
+    }
+}

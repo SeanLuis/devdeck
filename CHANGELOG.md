@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8
+
+- A single Claude Code login shows its limits in the menu bar and in the app without saving it as an account first
+- The menu bar shows the 5-hour window and the week of the account in use, and marks it when either is close to the limit
+- The account in use is read again within a minute and a half while the agent works, and right after a window resets
+- The menu bar panel says when each window resets and how old the reading is, with a button to read it again
+
 ## 0.1.7
 
 - The menu bar shows how far the agent account in use has gone in its 5-hour window, next to memory

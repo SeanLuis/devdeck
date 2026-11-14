@@ -90,11 +90,15 @@ extension AppModel {
         }
         let codexPlan = codexLive ?? agentUsage.codexPlan
         var usage: [String: AccountUsage] = [:]
-        if let vault, !vault.accounts().isEmpty {
+        if let vault {
             // Show what is known at once; the readings that are due arrive a moment later.
             usage = await accountUsage.snapshot()
             accounts = await AgentAccounts.load(env: loginEnv, codexPlan: codexPlan, vault: vault, usage: usage)
-            usage = await accountUsage.refresh(vault: vault, force: force)
+            // Tokens spent since the last look mean the account in use has moved: read it sooner.
+            let spent = agentUsage.tokens(agent: "Claude Code", since: Date().addingTimeInterval(-6 * 3600))
+            let busy = spent != lastClaudeTokens
+            lastClaudeTokens = spent
+            usage = await accountUsage.refresh(vault: vault, force: force, busy: busy)
         }
         accounts = await AgentAccounts.load(env: loginEnv, codexPlan: codexPlan, vault: vault, usage: usage)
         applySessionPace()
@@ -153,8 +157,16 @@ extension AppModel {
 
     /// The 5-hour window of the Claude Code account in use (or its first window), for the menu bar.
     var activeAccountWindow: UsageWindow? {
-        guard let active = accounts.accounts.first(where: { $0.agent == "Claude Code" && $0.active }) else { return nil }
+        guard let active = activeClaudeAccount else { return nil }
         return active.windows.first { $0.name == "5 h" } ?? active.windows.first
+    }
+
+    var activeClaudeAccount: AgentAccount? { accounts.accounts.first { $0.agent == "Claude Code" && $0.active } }
+
+    /// What the menu bar says about the account in use: its 5-hour and 7-day windows.
+    var menuBarAccountTitle: String? {
+        guard let active = activeClaudeAccount else { return nil }
+        return AgentAccount.menuBarTitle(windows: active.windows, warnAt: Double(settings.accountSwitchPercent))
     }
 
     /// Open Claude Code sessions: they keep the login they started with until they are restarted.
