@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.6
+
+- Near the limit, Claude Code can switch by itself to the saved account with the most room (the default, at 90%), only suggest it, or do nothing; any account can be left out
+- Add account: opens the agent's own login in the browser and saves the new account when it appears, for Claude Code and Codex
+- Codex limits are asked to Codex itself, so they follow the whole plan and not only what ran on this Mac
+- The 5-hour window says when it runs out at the current pace; old readings are shown as old, and a window that already reset shows no figure
+- Command line: `devdeck status`, `top`, `ports` and `agents`, with `--json`
+- `devdeck mcp`: a read-only Model Context Protocol server for coding agents
+- Your own recipes in `toolkit.json`
+- Homebrew cask
+- A walkthrough at the top of the README
+
 ## 0.1.5
 
 - The account in use is shown at the top of every page, with a menu to switch

@@ -73,6 +73,8 @@ public struct CodexPlan: Hashable, Sendable {
     public var secondaryResets: Date?
     /// "sin créditos" / balance, when Codex reports it.
     public var credits: String?
+    /// When Codex itself answered (nil when the figures come from old session logs).
+    public var readAt: Date?
 }
 
 public struct AgentUsageReport: Sendable {

@@ -324,11 +324,56 @@ struct AccountSuggestionTests {
         report.accounts = [Self.account("a", active: true, [93, 40]), Self.account("b", active: false, [30, 55]), Self.account("c", active: false, [5, 20])]
         let suggestion = report.switchSuggestion(threshold: 90)
         #expect(suggestion?.to.email == "c" && suggestion?.window.name == "5 h")
+        // An excluded account is never the destination: the next best one is.
+        #expect(report.switchSuggestion(threshold: 90, excluded: ["c"])?.to.email == "b")
         // Below the threshold, or nobody with clear room, or only stale or failed readings: say nothing.
         report.accounts[0] = Self.account("a", active: true, [80, 40])
         #expect(report.switchSuggestion(threshold: 90) == nil)
         report.accounts = [Self.account("a", active: true, [95, 40]), Self.account("b", active: false, [30, 85]),
                            Self.account("c", active: false, [5, 5], read: 7200), Self.account("d", active: false, [5, 5], note: "sin conexión")]
         #expect(report.switchSuggestion(threshold: 90) == nil)
+    }
+}
+
+@Suite("Account login")
+struct AccountLoginTests {
+    @Test func runsTheAgentsOwnLoginCommand() {
+        let claude = AccountLogin.script(agent: "Claude Code", binaryPath: "/Users/o'brien/bin/claude")
+        #expect(claude.hasPrefix("#!/bin/zsh -l\n"))
+        #expect(claude.contains("'/Users/o'\\''brien/bin/claude' auth login\n"))
+        #expect(AccountLogin.script(agent: "Codex", binaryPath: "/usr/local/bin/codex").contains("'/usr/local/bin/codex' login\n"))
+    }
+}
+
+@Suite("Codex limits and session pace")
+struct CodexLimitsTests {
+    @Test func parsesTheAppServerAnswer() {
+        let result: [String: Any] = ["rateLimits": ["planType": "plus", "primary": ["usedPercent": 2, "windowDurationMins": 300, "resetsAt": 1_794_629_199],
+                                                    "secondary": ["usedPercent": 41.5, "resetsAt": 1_795_137_607], "credits": ["hasCredits": false, "unlimited": false]]]
+        let plan = CodexLimits.parse(result)
+        #expect(plan?.primaryUsedPercent == 2 && plan?.secondaryUsedPercent == 41.5 && plan?.planType == "plus")
+        #expect(plan?.primaryResets == Date(timeIntervalSince1970: 1_794_629_199) && plan?.readAt != nil && plan?.credits == nil)
+        #expect(CodexLimits.parse(["rateLimits": ["planType": "plus"]]) == nil)
+        #expect(CodexLimits.parse([:]) == nil)
+    }
+
+    @Test func projectsWhenTheShortWindowRunsOut() {
+        let now = Date()
+        let reset = now.addingTimeInterval(2 * 3600)
+        // 80 % after 3 h, and the last hour burned half of it: 40 points per hour, so 30 minutes are left.
+        let out = SessionPace.runsOut(percent: 80, resetsAt: reset, windowTokens: 1000, lastHourTokens: 500, now: now)
+        #expect(out.map { Int($0.timeIntervalSince(now) / 60) } == 30)
+        // A quiet last hour reaches the reset; nothing to warn about. Right after a reset: nothing either.
+        #expect(SessionPace.runsOut(percent: 80, resetsAt: reset, windowTokens: 1000, lastHourTokens: 50, now: now) == nil)
+        #expect(SessionPace.runsOut(percent: 20, resetsAt: now.addingTimeInterval(4.95 * 3600), windowTokens: 10, lastHourTokens: 10, now: now) == nil)
+    }
+
+    @Test func oldReadingsAreStale() {
+        var account = AgentAccount(agent: "Codex", email: "a", active: true)
+        account.windows = [UsageWindow(name: "5 h", percent: 10, resetsAt: nil)]
+        account.usageFetched = Date().addingTimeInterval(-3600)
+        #expect(account.isStale())
+        account.usageFetched = Date()
+        #expect(!account.isStale())
     }
 }

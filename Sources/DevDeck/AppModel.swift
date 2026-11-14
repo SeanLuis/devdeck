@@ -92,6 +92,12 @@ final class AppModel {
     /// Session id → the last step its agent took.
     var activities: [String: AgentActivity] = [:]
     var switchingAccount: String?
+    /// Agent whose login DevDeck is waiting for ("Añadir cuenta").
+    var addingAccount: String?
+    /// Codex's limits as Codex itself reports them, and when they were asked.
+    @ObservationIgnored var codexLive: CodexPlan?
+    @ObservationIgnored var codexAskedAt: Date = .distantPast
+    @ObservationIgnored var addingTask: Task<Void, Never>?
     var budgets: [Budget] = []
     var startingProjects: Set<String> = []
     var profiles: [WorkProfile] = []
@@ -99,6 +105,7 @@ final class AppModel {
     @ObservationIgnored var budgetFired: [String: String] = [:]
     @ObservationIgnored var waitTracker = AgentWaitTracker()
     @ObservationIgnored var suggestedSwitches: Set<String> = []
+    @ObservationIgnored var lastAutoSwitch: Date = .distantPast
     var availableProviders: [AIProvider] = []
     var notificationStatus = "desconocido"
     var notificationsAllowed = false

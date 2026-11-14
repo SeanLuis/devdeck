@@ -82,12 +82,12 @@ extension L10n {
     /// Display strings that live in data tables (not in an `L("…")` call) and are translated where they are shown.
     public static var dataKeys: [String] {
         var keys: [String] = []
-        for recipe in Toolkit.recipes { keys += [recipe.title, recipe.detail, recipe.group] }
+        for recipe in Toolkit.builtin { keys += [recipe.title, recipe.detail, recipe.group] }
         keys += Rule.defaults.map(\.name)
         keys += CacheScanner.patterns.map(\.note)
         for definition in CacheScanner.globalDefinitions { keys += [definition.label, definition.note, definition.regenerate] }
         keys += ["Se vuelve a generar con el build", "Se regenera solo en el próximo dev/build"]
-        keys += ["crítica", "alta", "normal", "5 h", "7 días", "créditos ilimitados", "templado", "caliente",
+        keys += ["crítica", "alta", "normal", "5 h", "7 días", "créditos ilimitados", "templado", "caliente", "Propias",
                  "sesión caducada: vuelve a iniciar sesión", "sin conexión", "sin credenciales guardadas", "se actualizará cuando uses Claude Code",
                  "límite de consultas; se reintenta luego"]
         keys += ProcessRole.displayStrings

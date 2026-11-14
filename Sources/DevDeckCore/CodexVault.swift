@@ -90,3 +90,35 @@ extension AccountVault {
         }
     }
 }
+
+/// Adding an account means logging in with the agent's own command: the browser, the password and the token
+/// exchange are the agent's business. DevDeck only opens that command and saves the login once it is there.
+public enum AccountLogin {
+    public static func binary(for agent: String) -> String { agent == AccountVault.codex ? "codex" : "claude" }
+
+    public static func arguments(for agent: String) -> [String] { agent == AccountVault.codex ? ["login"] : ["auth", "login"] }
+
+    /// A script Terminal can open: runs the login and says what happens next.
+    public static func script(agent: String, binaryPath: String) -> String {
+        let quoted = "'" + binaryPath.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return """
+        #!/bin/zsh -l
+        clear
+        echo "DevDeck · \(agent)"
+        echo
+        \(quoted) \(arguments(for: agent).joined(separator: " "))
+        echo
+        echo "\(L("Listo. DevDeck guarda la cuenta sola; puedes cerrar esta ventana."))"
+
+        """
+    }
+}
+
+extension AccountVault {
+    /// "who is logged in" as one comparable value, per agent; nil when nobody is.
+    public func liveKey(agent: String) -> String? {
+        if agent == Self.codex { return liveCodexIdentity().map { $0.email.lowercased() + "|" + ($0.accountID ?? "") } }
+        return liveIdentity().map { $0.email.lowercased() + "|" + ($0.organizationUuid ?? "") }
+    }
+}
+

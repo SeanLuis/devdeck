@@ -1,3 +1,4 @@
+import AppKit
 import DevDeckCore
 import Foundation
 
@@ -81,30 +82,73 @@ extension AppModel {
 
     func refreshAccounts(force: Bool = false) async {
         guard !demo else { return }
+        // Codex: ask its own CLI every couple of minutes; a failed read keeps the last good one.
+        if force || Date().timeIntervalSince(codexAskedAt) > 120, let binary = LoginEnvironment.which("codex", env: loginEnv) {
+            codexAskedAt = Date()
+            let env = loginEnv
+            if let plan = await Task.detached(priority: .utility, operation: { CodexLimits.read(binary: binary, env: env) }).value { codexLive = plan }
+        }
+        let codexPlan = codexLive ?? agentUsage.codexPlan
         var usage: [String: AccountUsage] = [:]
         if let vault, !vault.accounts().isEmpty {
             // Show what is known at once; the readings that are due arrive a moment later.
             usage = await accountUsage.snapshot()
-            accounts = await AgentAccounts.load(env: loginEnv, codexPlan: agentUsage.codexPlan, vault: vault, usage: usage)
+            accounts = await AgentAccounts.load(env: loginEnv, codexPlan: codexPlan, vault: vault, usage: usage)
             usage = await accountUsage.refresh(vault: vault, force: force)
         }
-        accounts = await AgentAccounts.load(env: loginEnv, codexPlan: agentUsage.codexPlan, vault: vault, usage: usage)
+        accounts = await AgentAccounts.load(env: loginEnv, codexPlan: codexPlan, vault: vault, usage: usage)
+        applySessionPace()
         suggestAccountSwitch()
     }
 
-    /// Offers to move to an account with room when the one in use is nearly spent. The switch happens only if
-    /// the user presses the button; each window is offered once.
+    /// "Runs out in ~35 min at this pace" for the 5-hour window of the Claude Code account in use.
+    func applySessionPace() {
+        guard let index = accounts.accounts.firstIndex(where: { $0.agent == "Claude Code" && $0.active }),
+              let w = accounts.accounts[index].windows.firstIndex(where: { $0.name == "5 h" }) else { return }
+        let window = accounts.accounts[index].windows[w]
+        guard let resets = window.resetsAt else { return }
+        let now = Date()
+        accounts.accounts[index].windows[w].runsOutAt = SessionPace.runsOut(
+            percent: window.percent, resetsAt: resets,
+            windowTokens: agentUsage.tokens(agent: "Claude Code", since: resets.addingTimeInterval(-5 * 3600), now: now),
+            lastHourTokens: agentUsage.tokens(agent: "Claude Code", since: now.addingTimeInterval(-3600), now: now), now: now)
+    }
+
+    /// When the account in use is nearly spent and another has room: says so with a button ("suggest"),
+    /// or switches by itself and tells afterwards ("auto"). The user chooses which, the threshold, and which
+    /// accounts are left out.
     func suggestAccountSwitch() {
-        guard settings.suggestAccountSwitch, switchingAccount == nil,
-              let suggestion = accounts.switchSuggestion(threshold: settings.accountSwitchPercent),
-              suggestedSwitches.insert(suggestion.key).inserted else { return }
-        let title = L("%@ al %d%% en la ventana de %@", suggestion.from.alias ?? suggestion.from.email, Int(suggestion.window.percent.rounded()), L(suggestion.window.name))
+        let mode = settings.accountSwitchMode
+        guard mode != "off", switchingAccount == nil,
+              let suggestion = accounts.switchSuggestion(threshold: settings.accountSwitchPercent, excluded: Set(settings.accountSwitchExcluded)) else { return }
+        let from = suggestion.from.alias ?? suggestion.from.email, to = suggestion.to.alias ?? suggestion.to.email
+        let title = L("%@ al %d%% en la ventana de %@", from, Int(suggestion.window.percent.rounded()), L(suggestion.window.name))
         let room = suggestion.to.windows.map(\.percent).max() ?? 0
-        let body = L("%@ tiene margen (%d%%). ¿Cambiar Claude Code a esa cuenta?", suggestion.to.alias ?? suggestion.to.email, Int(room.rounded()))
+        if mode == "auto" {
+            // Never bounce between accounts: one automatic switch every ten minutes at most.
+            guard Date().timeIntervalSince(lastAutoSwitch) > 600 else { return }
+            lastAutoSwitch = Date()
+            Task {
+                await switchClaudeAccount(suggestion.to)
+                let body = L("Cambio automático a %@ (%d%% usado).", to, Int(room.rounded()))
+                presentAlert(title: title, body: body, severity: .info, seconds: 12)
+                notify(title: title, body: body, severity: .info)
+            }
+            return
+        }
+        guard suggestedSwitches.insert(suggestion.key).inserted else { return }
+        let body = L("%@ tiene margen (%d%%). ¿Cambiar Claude Code a esa cuenta?", to, Int(room.rounded()))
         pushAlert(AlertEvent(title: title, message: body, severity: .info))
         presentAlert(title: title, body: body, severity: .warning, actionLabel: L("Cambiar de cuenta"), seconds: 25) { [weak self] in
             Task { await self?.switchClaudeAccount(suggestion.to) }
         }
+    }
+
+    func setAccountExcluded(_ account: AgentAccount, _ excluded: Bool) {
+        guard let id = account.vaultID else { return }
+        settings.accountSwitchExcluded.removeAll { $0 == id }
+        if excluded { settings.accountSwitchExcluded.append(id) }
+        saveSettings()
     }
 
     /// Open Claude Code sessions: they keep the login they started with until they are restarted.
@@ -171,6 +215,60 @@ extension AppModel {
         case .failure(let error): show(error.localizedDescription)
         }
         await refreshAccounts(force: true)
+    }
+
+    /// Opens the agent's own login in Terminal and saves the new login when it appears.
+    /// The account in use now is saved first, so logging into another one loses nothing.
+    func addAccount(agent: String) {
+        guard let vault, addingAccount == nil else { return }
+        guard let binary = LoginEnvironment.which(AccountLogin.binary(for: agent), env: loginEnv) else {
+            show(L("No se encontró el comando de %@ en este Mac.", agent))
+            return
+        }
+        let file = store.directory.appendingPathComponent("login-\(AccountLogin.binary(for: agent)).command")
+        do {
+            try AccountLogin.script(agent: agent, binaryPath: binary).write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+        } catch {
+            show(error.localizedDescription)
+            return
+        }
+        addingAccount = agent
+        addingTask = Task { [weak self] in
+            let before: String? = await Task.detached {
+                _ = try? (agent == AccountVault.codex ? vault.addCurrentCodex() : vault.addCurrent())
+                return vault.liveKey(agent: agent)
+            }.value
+            NSWorkspace.shared.open(file)
+            var saved: String?
+            // Ten minutes to finish in the browser; after that it stops waiting (the login itself is not undone).
+            for _ in 0..<300 {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if Task.isCancelled { break }
+                let now = await Task.detached { vault.liveKey(agent: agent) }.value
+                guard let now, now != before else { continue }
+                // The agent writes its files in two steps: give it a moment before taking the pair.
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                saved = await Task.detached { try? (agent == AccountVault.codex ? vault.addCurrentCodex() : vault.addCurrent()).email }.value
+                if saved != nil { break }
+            }
+            guard let self else { return }
+            self.addingAccount = nil
+            try? FileManager.default.removeItem(at: file)
+            if let saved {
+                self.show(L("Cuenta guardada: %@", saved))
+                self.pushAlert(AlertEvent(title: L("Cuenta añadida"), message: "\(agent) · \(saved)", severity: .info))
+                await self.refreshAccounts(force: true)
+            } else if !Task.isCancelled {
+                self.show(L("No apareció ninguna cuenta nueva de %@.", agent))
+            }
+        }
+    }
+
+    func cancelAddAccount() {
+        addingTask?.cancel()
+        addingTask = nil
+        addingAccount = nil
     }
 
     func renameAccount(_ account: AgentAccount, alias: String) async {

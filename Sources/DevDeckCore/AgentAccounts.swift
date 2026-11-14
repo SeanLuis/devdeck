@@ -8,6 +8,8 @@ public struct UsageWindow: Hashable, Sendable, Identifiable {
     public let resetsAt: Date?
     /// False when, at the current pace, the quota runs out before it resets.
     public let willLast: Bool?
+    /// For the short window: when it runs out at the current pace, if that is before it resets.
+    public var runsOutAt: Date?
 
     public init(name: String, percent: Double, resetsAt: Date?, willLast: Bool? = nil) {
         self.name = name; self.percent = percent; self.resetsAt = resetsAt; self.willLast = willLast
@@ -15,6 +17,16 @@ public struct UsageWindow: Hashable, Sendable, Identifiable {
 }
 
 /// A login of a coding agent on this Mac, with whatever the agent says about its limits.
+extension AgentAccount {
+    /// A reading older than this is shown as old: the figure may no longer be true.
+    public static let staleAfter: TimeInterval = 900
+
+    public func isStale(now: Date = Date()) -> Bool {
+        guard !windows.isEmpty, let read = usageFetched else { return false }
+        return now.timeIntervalSince(read) > Self.staleAfter
+    }
+}
+
 public struct AgentAccount: Identifiable, Hashable, Sendable {
     public var id: String { "\(agent)|\(number.map(String.init) ?? email)" }
     public let agent: String
@@ -113,7 +125,7 @@ public enum AgentAccounts {
                 account.vaultID = stored.id
                 account.alias = stored.alias
                 // Codex only reports limits in the sessions of the login in use.
-                if account.active, let codexLive { account.windows = codexLive.windows; account.note = codexLive.note; account.plan = codexLive.plan ?? account.plan }
+                if account.active, let codexLive { account.windows = codexLive.windows; account.note = codexLive.note; account.plan = codexLive.plan ?? account.plan; account.usageFetched = codexLive.usageFetched }
                 report.accounts.append(account)
             }
             if active == nil, let codexLive { report.accounts.append(codexLive) }
@@ -223,6 +235,7 @@ public enum AgentAccounts {
         if let percent = plan?.primaryUsedPercent { account.windows.append(UsageWindow(name: "5 h", percent: percent, resetsAt: plan?.primaryResets)) }
         if let percent = plan?.secondaryUsedPercent { account.windows.append(UsageWindow(name: "7 días", percent: percent, resetsAt: plan?.secondaryResets)) }
         account.note = plan?.credits
+        account.usageFetched = plan?.readAt
         return account
     }
 }
@@ -243,13 +256,13 @@ extension AccountsReport {
     static func peak(_ account: AgentAccount) -> UsageWindow? { account.windows.max { $0.percent < $1.percent } }
 
     /// When the Claude Code account in use passes `threshold` and a saved one has clearly more room, the one with the most room.
-    public func switchSuggestion(threshold: Double, now: Date = Date()) -> AccountSwitchSuggestion? {
+    public func switchSuggestion(threshold: Double, excluded: Set<String> = [], now: Date = Date()) -> AccountSwitchSuggestion? {
         let claude = accounts(of: "Claude Code").filter { $0.vaultID != nil }
         guard let active = claude.first(where: \.active), let hot = Self.peak(active), hot.percent >= threshold else { return nil }
         let fresh: TimeInterval = 1800
         let candidates = claude.filter { candidate in
             // Only accounts whose limits were read recently: an old reading is not a reason to move.
-            guard !candidate.active, !candidate.windows.isEmpty, candidate.note == nil,
+            guard !candidate.active, !excluded.contains(candidate.vaultID ?? ""), !candidate.windows.isEmpty, candidate.note == nil,
                   let read = candidate.usageFetched, now.timeIntervalSince(read) < fresh, let peak = Self.peak(candidate) else { return false }
             return peak.percent <= min(70, threshold - 20)
         }

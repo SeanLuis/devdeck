@@ -104,7 +104,7 @@ enum SnapshotRunner {
         app.run()
     }
 
-    static func render<V: View>(_ view: V, size: CGSize, to path: String) async {
+    static func render<V: View>(_ view: V, size: CGSize, to path: String, settle: Double = 1.5) async {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -112,7 +112,7 @@ enum SnapshotRunner {
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -30000, y: -30000))
         window.orderFrontRegardless()
-        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
         host.layoutSubtreeIfNeeded()
         host.display()
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
@@ -121,5 +121,88 @@ enum SnapshotRunner {
             try? data.write(to: URL(fileURLWithPath: path))
         }
         window.orderOut(nil)
+    }
+
+    // MARK: - Walkthrough
+
+    /// One stop of the walkthrough: where the pointer goes, and what the app shows after the click.
+    struct Stop {
+        let point: CGPoint
+        let section: SidebarSection
+        var tab: String?
+    }
+
+    /// `DevDeck --record <dir>`: a walkthrough of the real interface on the demo machine, as numbered PNG frames
+    /// meant for 12 frames per second. The pointer travels to each control, clicks, and the app answers.
+    /// Nothing is read from this Mac, so the frames can be published.
+    static func record(outDir: String) {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let model = AppModel(headless: true, demo: true)
+        model.settings.language = .en
+        L10n.language = .en
+        model.settings.appearance = "dark"
+        model.start()
+        try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+        let size = CGSize(width: 1400, height: 900)
+        // Points measured on the rendered window (sidebar rows and the tabs of the Agents page).
+        let stops: [Stop] = [
+            Stop(point: CGPoint(x: 74, y: 122), section: .overview),
+            Stop(point: CGPoint(x: 66, y: 182), section: .history),
+            Stop(point: CGPoint(x: 70, y: 301), section: .projects),
+            Stop(point: CGPoint(x: 72, y: 331), section: .agents, tab: "activity"),
+            Stop(point: CGPoint(x: 452, y: 105), section: .agents, tab: "accounts"),
+            Stop(point: CGPoint(x: 566, y: 105), section: .agents, tab: "usage"),
+            Stop(point: CGPoint(x: 94, y: 450), section: .rules),
+            Stop(point: CGPoint(x: 74, y: 122), section: .overview),
+        ]
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            model.selectedProjectRoot = model.snapshot.groups.first { $0.kind == .project && !$0.services.isEmpty }?.projectRoot
+            var frame = 0
+            var pointer = CGPoint(x: 700, y: 520)
+            func shoot(_ pressed: Bool, settle: Double) async {
+                let view = RootView().environment(model).appAppearance("dark").appLanguage(.en)
+                    .overlay(alignment: .topLeading) { PointerMark(pressed: pressed).offset(x: pointer.x, y: pointer.y) }
+                await render(view, size: size, to: String(format: "%@/f%04d.png", outDir, frame), settle: settle)
+                frame += 1
+            }
+            UserDefaults.standard.set("activity", forKey: "agentsTab")
+            model.selectedSection = .overview
+            for _ in 0..<10 { await shoot(false, settle: frame == 0 ? 1.5 : 0.12) }
+            for stop in stops.dropFirst() {
+                // Travel: ease in and out over ten frames.
+                let from = pointer
+                for step in 1...10 {
+                    let t = Double(step) / 10, eased = t * t * (3 - 2 * t)
+                    pointer = CGPoint(x: from.x + (stop.point.x - from.x) * eased, y: from.y + (stop.point.y - from.y) * eased)
+                    await shoot(false, settle: 0.12)
+                }
+                await shoot(true, settle: 0.12)
+                await shoot(true, settle: 0.12)
+                if let tab = stop.tab { UserDefaults.standard.set(tab, forKey: "agentsTab") }
+                model.selectedSection = stop.section
+                // The new page: one settled frame, then time to read it.
+                await shoot(false, settle: 0.9)
+                for _ in 0..<19 { await shoot(false, settle: 0.12) }
+            }
+            print("\(frame) frames written to \(outDir)")
+            exit(0)
+        }
+        app.run()
+    }
+}
+
+/// The pointer drawn over the walkthrough frames, with a ring while it clicks.
+private struct PointerMark: View {
+    let pressed: Bool
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if pressed { Circle().strokeBorder(Color.white.opacity(0.7), lineWidth: 2).frame(width: 30, height: 30).offset(x: -13, y: -13) }
+            Image(systemName: "cursorarrow").font(.system(size: 19, weight: .regular)).foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.8), radius: 1.5, y: 1)
+        }
+        .allowsHitTesting(false)
     }
 }

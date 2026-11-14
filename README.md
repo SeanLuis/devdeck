@@ -15,7 +15,7 @@ DevDeck is a native macOS app that attributes memory, swap, CPU and listening po
 
 [Download](https://github.com/SeanLuis/devdeck/releases/latest) · [Features](#features) · [Build from source](#build-from-source) · [Español](README.es.md)
 
-<img src="docs/screenshots/overview.png" alt="DevDeck overview" width="900">
+<img src="docs/demo.gif" alt="A walkthrough of DevDeck: overview, history, projects, agents, accounts and alerts" width="900">
 
 </div>
 
@@ -123,7 +123,49 @@ Download `DevDeck.zip` from the [latest release](https://github.com/SeanLuis/dev
 
 Requires macOS 14 or later.
 
+With Homebrew:
+
+```bash
+brew tap SeanLuis/devdeck https://github.com/SeanLuis/devdeck
+brew install --cask devdeck
+```
+
+That also puts a `devdeck` command on your PATH.
+
 DevDeck checks for new versions once a day and shows you the release notes. It never installs anything by itself: updating is one click, and the download is verified to be signed and notarized before it replaces the app.
+
+## Command line and MCP
+
+The app's binary answers from a terminal too, without opening the window:
+
+```bash
+devdeck status          # memory, swap, CPU, disk and what uses the most
+devdeck top             # what is using memory and CPU, by origin
+devdeck ports           # listening ports and who owns them
+devdeck agents --json   # tokens each coding agent spent
+```
+
+Without Homebrew, link it yourself: `ln -s /Applications/DevDeck.app/Contents/MacOS/DevDeck /usr/local/bin/devdeck`.
+
+`devdeck mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so a coding agent can check the machine before it starts another server. Its four tools (`system_status`, `top_consumers`, `listening_ports`, `agent_usage`) only read.
+
+```bash
+claude mcp add devdeck -- devdeck mcp
+```
+
+## Your own recipes
+
+Tools runs maintenance commands with a click. Add your own in `~/Library/Application Support/DevDeck/toolkit.json`; the file is read again whenever it changes:
+
+```json
+[
+  { "group": "Docker", "title": "Restart the proxy", "detail": "When routes stop resolving.",
+    "command": ["docker", "restart", "proxy"], "destructive": false },
+  { "title": "Clear the build folder", "command": ["rm -rf ~/Code/app/build"], "shell": true }
+]
+```
+
+A recipe asks for confirmation before running unless it says `"destructive": false`.
 
 ## Build from source
 
@@ -186,7 +228,7 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Releas
 ## Roadmap
 
 - Token readers for more agents (Cursor, Aider, Amp)
-- Per-project token budgets and alerts
+- A widget and Shortcuts actions
 - More languages
 
 ## License

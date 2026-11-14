@@ -8,6 +8,10 @@ import UserNotifications
 enum Entry {
     static func main() {
         let args = CommandLine.arguments
+        if let index = args.firstIndex(of: "--record"), args.count > index + 1 {
+            MainActor.assumeIsolated { SnapshotRunner.record(outDir: args[index + 1]) }
+            return
+        }
         if let index = args.firstIndex(of: "--snapshot") {
             let dir = args.count > index + 1 ? args[index + 1] : NSTemporaryDirectory() + "devdeck-shots"
             MainActor.assumeIsolated { SnapshotRunner.run(outDir: dir) }
@@ -40,6 +44,11 @@ enum Entry {
         }
         if args.contains("--ai-smoke") {
             CLI.aiSmoke()
+            return
+        }
+        // `devdeck status|top|ports|agents [--json]` and `devdeck mcp`: the same readings without the window.
+        if args.count > 1, args[1] == "mcp" || Reports.topics.contains(args[1]) || args[1] == "help" || args[1] == "--help" {
+            CLI.command(args[1], json: args.contains("--json"))
             return
         }
         if args.contains("--accounts-dump") {
@@ -358,6 +367,49 @@ enum CLI {
             case .failure(let failure): print("  uso no disponible: \(failure)")
             }
             done.signal()
+        }
+        done.wait()
+    }
+
+    static var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev" }
+
+    static func command(_ name: String, json: Bool) {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            defer { done.signal() }
+            switch name {
+            case "mcp":
+                await MCPServer.standard(version: version).serve()
+            case "status":
+                let (snapshot, system) = await Reports.sample()
+                let status = Reports.status(snapshot, system)
+                if json { print(Reports.json(status)); return }
+                let heaviest = status["heaviest"] as? [String: Any]
+                print("RAM \(status["memory_used_gb"] ?? 0) / \(status["memory_total_gb"] ?? 0) GB (\(status["memory_percent"] ?? 0)%) · pressure \(status["pressure"] ?? "") · swap \(status["swap_used_gb"] ?? 0) GB · CPU \(status["cpu_percent"] ?? 0)% · disk free \(status["disk_free_gb"] ?? 0) GB")
+                if let name = heaviest?["name"] { print("heaviest: \(name) \(heaviest?["memory_gb"] ?? 0) GB · \(status["listening_ports"] ?? 0) ports · \(status["headless_browsers"] ?? 0) headless browsers") }
+            case "top":
+                let rows = Reports.top(await Reports.sample().0)
+                print(json ? Reports.json(rows) : Reports.table(rows, columns: ["name", "kind", "memory_gb", "cpu_percent", "processes", "ports"]))
+            case "ports":
+                let rows = Reports.ports(await Reports.sample().0)
+                print(json ? Reports.json(rows) : Reports.table(rows, columns: ["port", "address", "process", "pid", "owner"]))
+            case "agents":
+                let usage = await AgentUsageScanner().scan(days: 7, env: ProcessInfo.processInfo.environment)
+                let rows = Reports.agents(usage, prices: PriceTable.load(directory: JSONStore().directory))
+                print(json ? Reports.json(rows) : Reports.table(rows, columns: ["agent", "tokens_today", "tokens_7_days", "responses_7_days", "list_price_usd_7_days"]))
+            default:
+                print("""
+                devdeck \(version)
+
+                  devdeck status   memory, swap, CPU, disk and what uses the most
+                  devdeck top      what is using memory and CPU, by origin
+                  devdeck ports    listening ports and who owns them
+                  devdeck agents   tokens each coding agent spent (today and 7 days)
+                  devdeck mcp      Model Context Protocol server over stdio (read-only tools)
+
+                Add --json for machine-readable output. With no command, the app opens.
+                """)
+            }
         }
         done.wait()
     }

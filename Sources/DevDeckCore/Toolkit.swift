@@ -20,7 +20,7 @@ public struct ToolRecipe: Identifiable, Hashable, Sendable {
 }
 
 public enum Toolkit {
-    public static let recipes: [ToolRecipe] = [
+    public static let builtin: [ToolRecipe] = [
         ToolRecipe(id: "docker-df", tool: "docker", group: "Docker", title: "Ver qué ocupa espacio", detail: "Imágenes, contenedores, volúmenes y caché de build.", command: ["docker", "system", "df"]),
         ToolRecipe(id: "docker-containers", tool: "docker", group: "Docker", title: "Borrar contenedores detenidos", detail: "No toca los que están corriendo ni los volúmenes.", command: ["docker", "container", "prune", "-f"], destructive: true),
         ToolRecipe(id: "docker-images", tool: "docker", group: "Docker", title: "Borrar imágenes sin usar", detail: "Las que ningún contenedor usa; se vuelven a descargar si hacen falta.", command: ["docker", "image", "prune", "-a", "-f"], destructive: true),
@@ -42,6 +42,41 @@ public enum Toolkit {
         ToolRecipe(id: "xcode-derived", tool: "rm", group: "Sistema", title: "Xcode: borrar DerivedData", detail: "Builds intermedios; Xcode los regenera.", command: ["rm -rf ~/Library/Developer/Xcode/DerivedData/*"], destructive: true, shell: true),
         ToolRecipe(id: "simctl", tool: "xcrun", group: "Sistema", title: "Borrar simuladores no disponibles", detail: "Simuladores de versiones de iOS que ya no tienes.", command: ["xcrun", "simctl", "delete", "unavailable"], destructive: true),
     ]
+
+    /// Your own recipes: `toolkit.json` in DevDeck's data folder, read again whenever the file changes.
+    ///
+    ///     [{"tool": "docker", "group": "Docker", "title": "Reiniciar el proxy", "detail": "…",
+    ///       "command": ["docker", "restart", "proxy"], "destructive": true}]
+    ///
+    /// `command` is the argument list; with `"shell": true` it is one line run by the shell.
+    nonisolated(unsafe) public static var customURL: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("DevDeck/toolkit.json")
+    nonisolated(unsafe) private static var cache: (modified: Date, recipes: [ToolRecipe])?
+    private static let cacheLock = NSLock()
+
+    public static func parseCustom(_ data: Data) -> [ToolRecipe] {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return list.enumerated().compactMap { index, item in
+            guard let title = item["title"] as? String, let command = item["command"] as? [String], let first = command.first, !first.isEmpty else { return nil }
+            let shell = item["shell"] as? Bool ?? false
+            let tool = item["tool"] as? String ?? (shell ? "sh" : first)
+            return ToolRecipe(id: "custom-" + (item["id"] as? String ?? String(index)), tool: tool, group: item["group"] as? String ?? "Propias",
+                              title: title, detail: item["detail"] as? String ?? command.joined(separator: " "), command: command,
+                              // Unknown commands ask before running unless the file says they are harmless.
+                              destructive: item["destructive"] as? Bool ?? true, shell: shell)
+        }
+    }
+
+    public static var custom: [ToolRecipe] {
+        guard let url = customURL, let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { return [] }
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        if let cache, cache.modified == modified { return cache.recipes }
+        let recipes = (try? Data(contentsOf: url)).map(parseCustom) ?? []
+        cache = (modified, recipes)
+        return recipes
+    }
+
+    public static var recipes: [ToolRecipe] { builtin + custom }
 
     public static func recipe(_ id: String) -> ToolRecipe? { recipes.first { $0.id == id } }
 

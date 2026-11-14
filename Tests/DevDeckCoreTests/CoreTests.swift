@@ -742,3 +742,41 @@ struct PowerTests {
         if let percent = status.batteryPercent { #expect((0...100).contains(percent)) }
     }
 }
+
+@Suite("Reports and MCP")
+struct ReportsTests {
+    @Test func tablesAlignAndJSONIsStable() {
+        let rows: [[String: Any]] = [["name": "shop", "memory_gb": 2.5, "ports": [3000, 4000]], ["name": "a-long-name", "memory_gb": 1.0]]
+        #expect(Reports.table(rows, columns: ["name", "memory_gb", "ports"]) == "name         memory_gb  ports\nshop         2.5        3000,4000\na-long-name  1")
+        #expect(Reports.json(["b": 1, "a": "/x/y"]).contains("\"a\" : \"/x/y\""))
+    }
+
+    @Test func mcpAnswersTheHandshakeAndRunsTools() async throws {
+        let server = MCPServer(version: "9", tools: [.init(name: "echo", description: "d") { ["ok": true] }])
+        let hello = await server.handle(["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-03-26"]])
+        let info = (hello?["result"] as? [String: Any])
+        #expect(info?["protocolVersion"] as? String == "2025-03-26" && (info?["serverInfo"] as? [String: Any])?["name"] as? String == "devdeck")
+        #expect(await server.handle(["jsonrpc": "2.0", "method": "notifications/initialized"]) == nil)
+        let list = await server.handle(["jsonrpc": "2.0", "id": 2, "method": "tools/list"])
+        #expect(((list?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.first?["name"] as? String == "echo")
+        let call = await server.handle(["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "echo"]])
+        let text = (((call?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        #expect(text.contains("\"ok\" : true"))
+        let missing = await server.handle(["jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": ["name": "nope"]])
+        #expect((missing?["result"] as? [String: Any])?["isError"] as? Bool == true)
+        let unknown = await server.handle(["jsonrpc": "2.0", "id": 5, "method": "resources/list"])
+        #expect(unknown?["error"] != nil)
+    }
+}
+
+@Suite("Custom recipes")
+struct CustomRecipeTests {
+    @Test func readsRecipesFromData() {
+        let json = #"[{"tool":"docker","group":"Docker","title":"Reiniciar proxy","command":["docker","restart","proxy"],"destructive":false},{"title":"Limpiar","command":["rm -rf ~/x"],"shell":true},{"title":"sin comando"}]"#
+        let recipes = Toolkit.parseCustom(Data(json.utf8))
+        #expect(recipes.count == 2)
+        #expect(recipes[0].id == "custom-0" && recipes[0].tool == "docker" && !recipes[0].destructive)
+        #expect(recipes[1].shell && recipes[1].destructive && recipes[1].tool == "sh" && recipes[1].group == "Propias")
+        #expect(Toolkit.parseCustom(Data("{}".utf8)).isEmpty)
+    }
+}

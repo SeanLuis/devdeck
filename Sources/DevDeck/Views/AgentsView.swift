@@ -306,13 +306,28 @@ struct AccountsPanel: View {
                 if report.accounts.isEmpty {
                     Text(L("No hay ninguna sesión iniciada en Claude Code ni en Codex.")).font(.system(size: 12)).foregroundStyle(Theme.tertiaryText)
                 }
+                if report.native {
+                    Divider().overlay(Theme.ink(0.05)).padding(.vertical, 12)
+                    AccountSwitchControls()
+                }
                 if model.vault != nil {
                     HStack(spacing: 8) {
                         if report.adoptable > 0 {
                             Button(L("Importar las %d cuentas de claude-swap", report.adoptable)) { confirmingImport = true }.buttonStyle(.borderedProminent)
                         }
-                        Text(L("Para tener varias: inicia sesión con cada una en el agente y pulsa “Guardar” en su fila. Después se cambia desde aquí."))
-                            .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(2)
+                        if let agent = model.addingAccount {
+                            ProgressView().controlSize(.small)
+                            Text(L("Esperando a que termines de iniciar sesión en %@…", agent)).font(.system(size: 12)).foregroundStyle(Theme.secondaryText)
+                            Button(L("Cancelar")) { model.cancelAddAccount() }.buttonStyle(.bordered)
+                        } else {
+                            Menu(L("Añadir cuenta")) {
+                                Button("Claude Code") { model.addAccount(agent: "Claude Code") }
+                                Button("Codex") { model.addAccount(agent: "Codex") }
+                            }
+                            .menuStyle(.button).buttonStyle(.bordered).fixedSize()
+                            Text(L("Abre el inicio de sesión del propio agente en el navegador. La cuenta en uso se guarda antes; la nueva queda en uso."))
+                                .font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(2)
+                        }
                         Spacer()
                     }
                     .padding(.top, 12)
@@ -344,6 +359,7 @@ struct AccountRow: View {
                     Text(account.alias ?? account.email).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                     if account.active { Pill(text: L("en uso"), color: Theme.success) }
                     if let plan = account.plan { Pill(text: plan) }
+                    if excluded { Pill(text: L("sin cambio automático")) }
                 }
                 Text(caption).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(1)
             }
@@ -351,7 +367,7 @@ struct AccountRow: View {
             if account.windows.isEmpty {
                 estimate
             } else {
-                ForEach(account.windows.prefix(3)) { LimitGauge(window: $0) }
+                ForEach(account.windows.prefix(3)) { LimitGauge(window: $0, stale: account.isStale()) }
             }
             ZStack(alignment: .trailing) {
                 Color.clear.frame(height: 1)
@@ -370,6 +386,9 @@ struct AccountRow: View {
         .contextMenu {
             if account.vaultID != nil {
                 Button(L("Renombrar…")) { alias = account.alias ?? ""; renaming = true }
+                if account.agent == "Claude Code" {
+                    Toggle(L("Excluir del cambio automático"), isOn: Binding(get: { excluded }, set: { model.setAccountExcluded(account, $0) }))
+                }
                 Button(L("Subir")) { Task { await model.moveAccount(account, by: -1) } }
                 Button(L("Bajar")) { Task { await model.moveAccount(account, by: 1) } }
                 Divider()
@@ -402,6 +421,8 @@ struct AccountRow: View {
         return account.agent == "Claude Code" && (model.accounts.native || model.accounts.adoptable == 0)
     }
 
+    private var excluded: Bool { account.vaultID.map(model.settings.accountSwitchExcluded.contains) ?? false }
+
     private var switchMessage: String {
         if account.agent == "Codex" {
             let running = model.openCodexProcesses
@@ -419,6 +440,7 @@ struct AccountRow: View {
         if let number = account.number { parts.append(L("cuenta %d", number)) }
         if let organization = account.organization, !organization.isEmpty { parts.append(organization) }
         if let note = account.note { parts.append(L(note)) }
+        if account.isStale(), let read = account.usageFetched { parts.append(L("leído %@", relative(read))) }
         if let expires = account.loginExpires, expires.timeIntervalSinceNow < 3 * 86400 {
             parts.append(L("la sesión caduca %@", relative(expires)))
         }
@@ -440,23 +462,68 @@ struct AccountRow: View {
     }
 }
 
+/// What happens when the account in use is nearly spent: nothing, a suggestion, or an automatic switch.
+struct AccountSwitchControls: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Al acercarse al límite")).font(.system(size: 13, weight: .medium))
+                Text(help).font(.system(size: 11)).foregroundStyle(Theme.tertiaryText).lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            Picker("", selection: $model.settings.accountSwitchMode) {
+                Text(L("No hacer nada")).tag("off")
+                Text(L("Sugerir")).tag("suggest")
+                Text(L("Cambiar sola")).tag("auto")
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            Picker("", selection: $model.settings.accountSwitchPercent) {
+                ForEach([50.0, 60, 70, 75, 80, 85, 90, 95], id: \.self) { Text("\(Int($0))%").tag($0) }
+            }
+            .labelsHidden().frame(width: 76).disabled(model.settings.accountSwitchMode == "off")
+        }
+        .onChange(of: model.settings.accountSwitchMode) { model.saveSettings() }
+        .onChange(of: model.settings.accountSwitchPercent) { model.saveSettings() }
+    }
+
+    private var help: String {
+        switch model.settings.accountSwitchMode {
+        case "auto": return L("Cuando la cuenta en uso pasa del umbral, Claude Code cambia a la que más margen tenga y te avisa. Clic derecho en una cuenta para excluirla.")
+        case "suggest": return L("Cuando la cuenta en uso pasa del umbral, DevDeck propone la que más margen tenga; el cambio lo confirmas tú.")
+        default: return L("DevDeck no propone ni cambia de cuenta.")
+        }
+    }
+}
+
 struct LimitGauge: View {
     let window: UsageWindow
+    /// An old reading: drawn faint, and a window that has already reset shows no figure at all.
+    var stale = false
+
+    private var expired: Bool { window.resetsAt.map { $0 < Date() } ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(L(window.name)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.tertiaryText)
                 Spacer(minLength: 2)
-                Text("\(Int(window.percent.rounded()))%").font(.system(size: 12).monospacedDigit())
+                Text(expired ? "—" : "\(Int(window.percent.rounded()))%").font(.system(size: 12).monospacedDigit())
             }
-            UsageBar(fraction: window.percent / 100, tint: Theme.level(window.percent / 100))
-            Text(detail).font(.system(size: 10)).foregroundStyle(window.willLast == false ? Theme.warning : Theme.tertiaryText).lineLimit(1)
+            UsageBar(fraction: expired ? 0 : window.percent / 100, tint: Theme.level(window.percent / 100))
+            Text(detail).font(.system(size: 10)).foregroundStyle(warns ? Theme.warning : Theme.tertiaryText).lineLimit(1)
         }
         .frame(width: 128)
+        .opacity(stale || expired ? 0.5 : 1)
     }
 
+    private var warns: Bool { !expired && (window.willLast == false || window.runsOutAt != nil) }
+
     private var detail: String {
+        if expired { return L("ya se reinició; sin lectura nueva") }
+        if let runsOut = window.runsOutAt { return L("se agota %@", relative(runsOut)) }
         if window.willLast == false { return L("se agota antes del reinicio") }
         guard let resets = window.resetsAt else { return " " }
         return L("reinicia %@", relative(resets))

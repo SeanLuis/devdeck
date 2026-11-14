@@ -91,6 +91,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Suggest another saved account when the one in use is about to hit its limit (it only suggests).
     public var suggestAccountSwitch = true
     public var accountSwitchPercent: Double = 90
+    /// What to do when the account in use is nearly spent and another has room:
+    /// "off" | "suggest" (a notice with a button) | "auto" (switch, then tell).
+    public var accountSwitchMode = "auto"
+    /// Saved accounts (their ids) that are never switched to automatically.
+    public var accountSwitchExcluded: [String] = []
     public var ai = AIConfig()
     /// "system" | "light" | "dark"
     public var appearance = "system"
@@ -126,6 +131,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         notifyAgentWaiting = try c.decodeIfPresent(Bool.self, forKey: .notifyAgentWaiting) ?? d.notifyAgentWaiting
         suggestAccountSwitch = try c.decodeIfPresent(Bool.self, forKey: .suggestAccountSwitch) ?? d.suggestAccountSwitch
         accountSwitchPercent = try c.decodeIfPresent(Double.self, forKey: .accountSwitchPercent) ?? d.accountSwitchPercent
+        accountSwitchMode = try c.decodeIfPresent(String.self, forKey: .accountSwitchMode) ?? (suggestAccountSwitch ? "auto" : "off")
+        accountSwitchExcluded = try c.decodeIfPresent([String].self, forKey: .accountSwitchExcluded) ?? []
         ai = try c.decodeIfPresent(AIConfig.self, forKey: .ai) ?? d.ai
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? d.appearance
         islandEnabled = try c.decodeIfPresent(Bool.self, forKey: .islandEnabled) ?? d.islandEnabled

@@ -211,15 +211,6 @@ struct SettingsView: View {
                             .buttonStyle(.bordered)
                         }
                     }
-                    row(L("Sugerir otra cuenta al acercarse al límite"), L("Cuando la cuenta en uso pasa de este uso y otra guardada tiene margen. Solo sugiere: el cambio lo confirmas tú.")) {
-                        HStack {
-                            Toggle("", isOn: $model.settings.suggestAccountSwitch).labelsHidden().toggleStyle(.switch)
-                            Picker("", selection: $model.settings.accountSwitchPercent) {
-                                ForEach([75.0, 80, 85, 90, 95], id: \.self) { Text("\(Int($0))%").tag($0) }
-                            }
-                            .labelsHidden().frame(width: 80).disabled(!model.settings.suggestAccountSwitch)
-                        }
-                    }
                     row(L("Avisar cuando un agente espera"), L("Cuando Claude Code termina un turno largo o se detiene a preguntar")) {
                         Toggle("", isOn: $model.settings.notifyAgentWaiting).labelsHidden().toggleStyle(.switch)
                     }
