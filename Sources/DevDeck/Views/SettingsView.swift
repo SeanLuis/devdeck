@@ -156,13 +156,21 @@ struct SettingsView: View {
                     }
                     Divider().overlay(Theme.ink(0.08))
                     OwnUsagePanel()
-                    DisclosureGroup(L("Avanzado"), isExpanded: $showAdvanced) {
+                    // A plain button: the system disclosure only answers to its small arrow, not to its title.
+                    Button { withAnimation(.snappy(duration: 0.2)) { showAdvanced.toggle() } } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).rotationEffect(.degrees(showAdvanced ? 90 : 0))
+                            Text(L("Avanzado")).font(.callout)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if showAdvanced {
                         row(L("Endpoint compatible"), L("API Responses de OpenAI o un gateway compatible")) {
                             TextField("https://api.openai.com/v1", text: $model.settings.ai.baseURL).textFieldStyle(.roundedBorder).frame(width: 320)
                         }
-                        .padding(.top, 8)
                     }
-                    .font(.callout)
                 }
                 case .island:
                 Panel(L("Isla y lanzador"), symbol: "rectangle.topthird.inset.filled") {
