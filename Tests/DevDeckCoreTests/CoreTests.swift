@@ -401,13 +401,20 @@ struct GameModeTests {
                                    startTime: Date(), memoryBytes: 1, cpuTimeNs: 0, cpuPercent: 0, isMine: true)
         let paused = ProcessPauser.pause(group("x", .headless, pids: [pid]), processes: [pid: record])
         #expect(paused.count == 1)
-        usleep(200_000)
-        #expect(state().hasPrefix("T"))
+        // A busy machine can take a while to answer `ps`: wait for the state instead of trusting one look.
+        func settles(_ stopped: Bool) -> Bool {
+            for _ in 0..<50 {
+                let now = state()
+                if !now.isEmpty, now.hasPrefix("T") == stopped { return true }
+                usleep(100_000)
+            }
+            return false
+        }
+        #expect(settles(true))
         // A pid that now belongs to a different process (other start time) is left alone.
         #expect(ProcessPauser.resume(paused, liveStarts: [pid: Date().addingTimeInterval(-500)]) == 0)
         #expect(ProcessPauser.resume(paused, liveStarts: [pid: record.startTime]) == 1)
-        usleep(200_000)
-        #expect(!state().hasPrefix("T"))
+        #expect(settles(false))
     }
 }
 
