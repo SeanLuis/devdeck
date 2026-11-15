@@ -26,10 +26,13 @@ struct AgentsView: View {
 
                 Picker("", selection: $tab) {
                     Text(L("Actividad")).tag("activity")
+                    Text(L("Sesiones")).tag("sessions")
                     Text(L("Cuentas y límites")).tag("accounts")
                     Text(L("Consumo")).tag("usage")
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
+                // A group that no longer exists (it moved to another page) falls back to the first one.
+                .onAppear { if !["activity", "sessions", "accounts", "usage"].contains(tab) { tab = "activity" } }
 
                 if tab == "activity" {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
@@ -56,12 +59,18 @@ struct AgentsView: View {
                     }
                 }
 
+                if tab == "sessions" {
+                    SessionsPanel()
+                }
+
+
                 if tab == "accounts" {
                     AccountsPanel()
                     BudgetsPanel()
                 }
 
                 if tab == "usage" {
+                    DigestPanel()
                     HStack(alignment: .top, spacing: 12) {
                         Panel(L("Tokens por día · últimos %@ días", "\(report.days)")) {
                             TokensByDayChart(report: report).frame(height: 200)
@@ -367,7 +376,9 @@ struct AccountRow: View {
             if account.windows.isEmpty {
                 estimate
             } else {
-                ForEach(account.windows.prefix(3)) { LimitGauge(window: $0, stale: account.isStale()) }
+                ForEach(account.windows.prefix(3)) { window in
+                    LimitGauge(window: window, stale: account.isStale(), accessory: AnyView(ResetBell(account: account, window: window)))
+                }
             }
             ZStack(alignment: .trailing) {
                 Color.clear.frame(height: 1)
@@ -502,6 +513,8 @@ struct LimitGauge: View {
     let window: UsageWindow
     /// An old reading: drawn faint, and a window that has already reset shows no figure at all.
     var stale = false
+    /// Something small beside the window's name (the notice bell).
+    var accessory: AnyView?
 
     private var expired: Bool { window.resetsAt.map { $0 < Date() } ?? false }
 
@@ -509,6 +522,7 @@ struct LimitGauge: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(L(window.name)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.tertiaryText)
+                if let accessory { accessory }
                 Spacer(minLength: 2)
                 Text(expired ? "—" : "\(Int(window.percent.rounded()))%").font(.system(size: 12).monospacedDigit())
             }
@@ -640,6 +654,25 @@ struct TokensByDayChart: View {
             .chartForegroundStyleScale(range: ChartPalette.colors)
             .chartYAxisLabel(L("millones de tokens"))
             .chartLegend(position: .bottom)
+        }
+    }
+}
+
+/// "Tell me when this window resets": shown once the window is well used, or while a notice is armed.
+struct ResetBell: View {
+    @Environment(AppModel.self) private var model
+    let account: AgentAccount
+    let window: UsageWindow
+
+    var body: some View {
+        let armed = model.isResetNoticeArmed(account, window)
+        if armed || (window.percent >= 50 && (window.resetsAt ?? .distantPast) > Date()) {
+            Button { model.toggleResetNotice(account, window) } label: {
+                Image(systemName: armed ? "bell.fill" : "bell").font(.system(size: 9))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(armed ? Theme.warning : Theme.tertiaryText)
+            .help(armed ? L("Aviso al reiniciar activado; pulsa para quitarlo") : L("Avísame cuando esta ventana se reinicie"))
         }
     }
 }

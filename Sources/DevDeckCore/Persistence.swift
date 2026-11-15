@@ -88,6 +88,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var notificationsEnabled = true
     /// Tell when an agent finishes a long turn or stops to ask something.
     public var notifyAgentWaiting = true
+    /// Hooks in Claude Code's settings that tell DevDeck at once when a session stops or asks for a permission.
+    public var claudeHooks = false
+    /// Let coding agents ask, through DevDeck's MCP server, to free a port or restart a server. Each request needs approval.
+    public var agentRequests = true
+    /// "Tell me when it resets": account window ("<account id>|<window>") → when it resets (seconds since 1970).
+    public var resetNotices: [String: Double] = [:]
     /// Suggest another saved account when the one in use is about to hit its limit (it only suggests).
     public var suggestAccountSwitch = true
     public var accountSwitchPercent: Double = 90
@@ -96,6 +102,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var accountSwitchMode = "auto"
     /// Saved accounts (their ids) that are never switched to automatically.
     public var accountSwitchExcluded: [String] = []
+    /// Folder → saved account (its id) that the agent's work there belongs to.
+    public var folderAccounts: [String: String] = [:]
     public var ai = AIConfig()
     /// "system" | "light" | "dark"
     public var appearance = "system"
@@ -129,10 +137,14 @@ public struct AppSettings: Codable, Hashable, Sendable {
         projectRoots = try c.decodeIfPresent([String].self, forKey: .projectRoots) ?? d.projectRoots
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         notifyAgentWaiting = try c.decodeIfPresent(Bool.self, forKey: .notifyAgentWaiting) ?? d.notifyAgentWaiting
+        claudeHooks = try c.decodeIfPresent(Bool.self, forKey: .claudeHooks) ?? false
+        agentRequests = try c.decodeIfPresent(Bool.self, forKey: .agentRequests) ?? true
+        resetNotices = try c.decodeIfPresent([String: Double].self, forKey: .resetNotices) ?? [:]
         suggestAccountSwitch = try c.decodeIfPresent(Bool.self, forKey: .suggestAccountSwitch) ?? d.suggestAccountSwitch
         accountSwitchPercent = try c.decodeIfPresent(Double.self, forKey: .accountSwitchPercent) ?? d.accountSwitchPercent
         accountSwitchMode = try c.decodeIfPresent(String.self, forKey: .accountSwitchMode) ?? (suggestAccountSwitch ? "auto" : "off")
         accountSwitchExcluded = try c.decodeIfPresent([String].self, forKey: .accountSwitchExcluded) ?? []
+        folderAccounts = try c.decodeIfPresent([String: String].self, forKey: .folderAccounts) ?? [:]
         ai = try c.decodeIfPresent(AIConfig.self, forKey: .ai) ?? d.ai
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? d.appearance
         islandEnabled = try c.decodeIfPresent(Bool.self, forKey: .islandEnabled) ?? d.islandEnabled

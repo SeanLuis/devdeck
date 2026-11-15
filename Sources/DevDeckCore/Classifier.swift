@@ -46,6 +46,11 @@ public struct ServiceInfo: Sendable, Hashable, Identifiable {
     public let cpuPercent: Double
     public let pids: [Int32]
     public let startTime: Date
+    /// The command as the person typed it, when the process line is not that (`./gradlew bootRun` for a Gradle JVM).
+    public var userCommand: String? = nil
+
+    /// What to compare against a remembered command to tell whether it is this service.
+    public var typedCommand: String { userCommand ?? command }
 }
 
 public struct PortBinding: Sendable, Hashable, Identifiable {
@@ -369,7 +374,29 @@ public struct Classifier {
         var serviceRootOf: [Int32: Int32] = [:]
         for (key, pids) in members where key.kind == .project {
             let set = Set(pids)
-            let roots = pids.filter { pid in !set.contains(byPid[pid]?.ppid ?? 0) }
+            // A Gradle build runs in a shared daemon: the daemon and its helpers are build machinery, never a project's
+            // service, and the app a daemon starts (bootRun) belongs with the `./gradlew` that asked for it.
+            var candidates = pids.filter { pid in !set.contains(byPid[pid]?.ppid ?? 0) }
+            let machinery = Set(candidates.filter { pid in
+                let kind = byPid[pid].flatMap { JavaLaunch.kind($0.args) }
+                return kind == .gradleDaemon || kind == .gradleWorker
+            })
+            for daemon in machinery { candidates += (children[daemon] ?? []).filter(set.contains) }
+            let clients = candidates.filter { pid in byPid[pid].flatMap { JavaLaunch.kind($0.args) } == .gradleClient }
+                .sorted { (byPid[$0]?.startTime ?? .distantPast) < (byPid[$1]?.startTime ?? .distantPast) }
+            var adopted: [Int32: [Int32]] = [:]
+            var roots: [Int32] = []
+            for pid in candidates where !machinery.contains(pid) {
+                guard let proc = byPid[pid] else { continue }
+                let kind = JavaLaunch.kind(proc.args)
+                if kind == .gradleDaemon || kind == .gradleWorker { continue }
+                let parentIsDaemon = byPid[proc.ppid].flatMap { JavaLaunch.kind($0.args) } == .gradleDaemon
+                if parentIsDaemon, let client = clients.last(where: { (byPid[$0]?.startTime ?? .distantPast) <= proc.startTime }) ?? clients.last {
+                    adopted[client, default: []].append(pid)
+                } else {
+                    roots.append(pid)
+                }
+            }
             var services: [ServiceInfo] = []
             for root in roots {
                 guard let rootProc = byPid[root] else { continue }
@@ -378,7 +405,7 @@ public struct Classifier {
                 while let pid = stack.popLast() {
                     guard set.contains(pid) else { continue }
                     tree.append(pid)
-                    stack.append(contentsOf: children[pid] ?? [])
+                    stack.append(contentsOf: (children[pid] ?? []) + (adopted[pid] ?? []))
                 }
                 for pid in tree { serviceRootOf[pid] = root }
                 let procs = tree.compactMap { byPid[$0] }
@@ -387,7 +414,8 @@ public struct Classifier {
                     ?? procs.lazy.compactMap { Self.framework(for: $0) }.first
                 let cwd = rootProc.cwd ?? procs.lazy.compactMap(\.cwd).first
                 let appDir = cwd.flatMap { dir in key.root.flatMap { resolver.appDir(for: dir, within: $0) } }
-                var label = Fmt.shortCommand(rootProc.args.isEmpty ? [rootProc.name] : rootProc.args, max: 3)
+                let typed = JavaLaunch.userCommand(rootProc.args, cwd: cwd)
+                var label = Fmt.shortCommand(typed ?? (rootProc.args.isEmpty ? [rootProc.name] : rootProc.args), max: 3)
                 if let appDir, let root = key.root, appDir != root {
                     label += "  ·  " + String(appDir.dropFirst(root.count + 1))
                 }
@@ -397,7 +425,7 @@ public struct Classifier {
                     framework: framework, ports: treePorts,
                     memoryBytes: procs.reduce(0) { $0 + $1.memoryBytes },
                     cpuPercent: procs.reduce(0) { $0 + $1.cpuPercent },
-                    pids: tree, startTime: rootProc.startTime
+                    pids: tree, startTime: rootProc.startTime, userCommand: typed?.joined(separator: " ")
                 ))
             }
             servicesByGroup[key.id] = services.sorted { $0.memoryBytes > $1.memoryBytes }

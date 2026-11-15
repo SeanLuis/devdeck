@@ -24,7 +24,8 @@ public enum ProjectStart {
         if recipe.ports.contains(where: boundPorts.contains) { return true }
         let wanted = ProcessControl.normalizedArgv(recipe.argv).joined(separator: " ")
         return services.contains { service in
-            (service.cwd == recipe.cwd || service.dirs.contains(recipe.cwd)) && (service.command == wanted || service.command == recipe.commandLine)
+            (service.cwd == recipe.cwd || service.dirs.contains(recipe.cwd))
+                && (service.command == wanted || service.command == recipe.commandLine || service.typedCommand == recipe.commandLine)
         }
     }
 

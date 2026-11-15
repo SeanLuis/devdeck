@@ -32,6 +32,9 @@ extension AgentAccount {
         return (hot ? "! " : "✦ ") + figures.joined(separator: " · ")
     }
 
+    /// Key of a "tell me when it resets" notice for one of this account's windows.
+    public func resetKey(_ window: UsageWindow) -> String { id + "|" + window.name }
+
     public func isStale(now: Date = Date()) -> Bool {
         guard !windows.isEmpty, let read = usageFetched else { return false }
         return now.timeIntervalSince(read) > Self.staleAfter
@@ -257,34 +260,85 @@ public enum AgentAccounts {
     }
 }
 
-/// "This account is about to run out and that one has room": the suggestion DevDeck makes. It never switches on its own.
+/// "This account is about to run out and that one has room". Depending on the user's choice, DevDeck only
+/// proposes it or switches Claude Code to `to` by itself.
 public struct AccountSwitchSuggestion: Hashable, Sendable {
     public let from: AgentAccount
     public let to: AgentAccount
-    /// The window that is running out, and how full it is.
+    /// The window that is running out ("5 h" or "7 días"), and how full it is.
     public let window: UsageWindow
 
     /// Changes when the window resets, so each cycle is announced once.
     public var key: String { "\(from.id)|\(window.name)|\(Int((window.resetsAt?.timeIntervalSince1970 ?? 0) / 3600))" }
 }
 
-extension AccountsReport {
-    /// The busiest window of an account (per-model quotas included).
-    static func peak(_ account: AgentAccount) -> UsageWindow? { account.windows.max { $0.percent < $1.percent } }
+extension AgentAccount {
+    /// How full one of the account's windows is now. A window whose reset time has passed counts as 0:
+    /// it has started again and the old figure is no longer true. nil when the account has no such window.
+    public func percentNow(_ name: String, now: Date = Date()) -> Double? {
+        guard let window = windows.first(where: { $0.name == name }) else { return nil }
+        return (window.resetsAt ?? .distantFuture) <= now ? 0 : window.percent
+    }
+}
 
-    /// When the Claude Code account in use passes `threshold` and a saved one has clearly more room, the one with the most room.
+extension AccountsReport {
+    /// The windows that decide a switch. Per-model quotas ("Fable"…) neither trigger one nor rule an account out.
+    static let switchWindows = ["5 h", "7 días"]
+
+    /// When the Claude Code account in use reaches `threshold` in its 5-hour or 7-day window, the saved account with
+    /// the most room in its 5-hour window (then in its week). Only an account that can really be used qualifies: a
+    /// fresh reading without errors, both windows below the threshold, and at least 10 points less than the account
+    /// in use in the window that is running out, so two nearly full accounts never bounce between each other.
     public func switchSuggestion(threshold: Double, excluded: Set<String> = [], now: Date = Date()) -> AccountSwitchSuggestion? {
         let claude = accounts(of: "Claude Code").filter { $0.vaultID != nil }
-        guard let active = claude.first(where: \.active), let hot = Self.peak(active), hot.percent >= threshold else { return nil }
+        guard let active = claude.first(where: \.active) else { return nil }
+        // The window that triggers; when both are over, the fuller one.
+        let hot = active.windows
+            .filter { Self.switchWindows.contains($0.name) && (active.percentNow($0.name, now: now) ?? 0) >= threshold }
+            .max { $0.percent < $1.percent }
+        guard let hot else { return nil }
         let fresh: TimeInterval = 1800
-        let candidates = claude.filter { candidate in
-            // Only accounts whose limits were read recently: an old reading is not a reason to move.
-            guard !candidate.active, !excluded.contains(candidate.vaultID ?? ""), !candidate.windows.isEmpty, candidate.note == nil,
-                  let read = candidate.usageFetched, now.timeIntervalSince(read) < fresh, let peak = Self.peak(candidate) else { return false }
-            return peak.percent <= min(70, threshold - 20)
+        let usable = claude.filter { candidate in
+            // Only accounts whose limits were read recently and without errors: an old reading is not a reason to move.
+            // A plan without a 5-hour window is judged by its week alone; one with no weekly window is left out.
+            guard !candidate.active, !excluded.contains(candidate.vaultID ?? ""), !candidate.windows.isEmpty,
+                  candidate.note.map(AccountUsage.transientNotes.contains) ?? true,
+                  let read = candidate.usageFetched, now.timeIntervalSince(read) < fresh,
+                  let week = candidate.percentNow("7 días", now: now) else { return false }
+            let fiveHour = candidate.percentNow("5 h", now: now) ?? 0
+            let sameWindow = candidate.percentNow(hot.name, now: now) ?? 0
+            return fiveHour < threshold && week < threshold && sameWindow <= hot.percent - 10
         }
-        guard let best = candidates.min(by: { (Self.peak($0)?.percent ?? 100) < (Self.peak($1)?.percent ?? 100) }) else { return nil }
+        let best = usable.min { a, b in
+            (a.percentNow("5 h", now: now) ?? 0, a.percentNow("7 días", now: now) ?? 0)
+                < (b.percentNow("5 h", now: now) ?? 0, b.percentNow("7 días", now: now) ?? 0)
+        }
+        guard let best else { return nil }
         return AccountSwitchSuggestion(from: active, to: best, window: hot)
     }
 }
 
+
+/// One-shot notices for the moment a spent window starts again.
+public enum ResetNotices {
+    /// Notices whose time has come, and the ones still waiting. One that is hours late (the Mac was asleep) still fires
+    /// once; one from another day is dropped without a word.
+    public static func due(_ armed: [String: Double], now: Date = Date()) -> (fired: [String], waiting: [String: Double]) {
+        var fired: [String] = [], waiting: [String: Double] = [:]
+        for (key, at) in armed {
+            let late = now.timeIntervalSince1970 - at
+            if late < 0 { waiting[key] = at } else if late < 12 * 3600 { fired.append(key) }
+        }
+        return (fired.sorted(), waiting)
+    }
+
+    /// The account in use just ran out: arm its notice by itself, so the wait has an end.
+    public static func autoArm(_ account: AgentAccount, armed: [String: Double], now: Date = Date()) -> [String: Double] {
+        var out = armed
+        for window in account.windows where window.percent >= 99.5 {
+            guard let resets = window.resetsAt, resets > now, out[account.resetKey(window)] == nil else { continue }
+            out[account.resetKey(window)] = resets.timeIntervalSince1970
+        }
+        return out
+    }
+}

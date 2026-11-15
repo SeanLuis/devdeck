@@ -310,28 +310,100 @@ struct CodexVaultTests {
 
 @Suite("Account switch suggestion")
 struct AccountSuggestionTests {
-    static func account(_ email: String, active: Bool, _ percents: [Double], read: TimeInterval = 60, note: String? = nil) -> AgentAccount {
+    static let names = ["5 h", "7 días", "Fable"]
+
+    /// Percents in order: 5 h, 7 días, then a per-model weekly quota ("Fable").
+    static func account(_ email: String, active: Bool, _ percents: [Double], read: TimeInterval = 60, note: String? = nil,
+                        resets: TimeInterval = 3600) -> AgentAccount {
         var account = AgentAccount(agent: "Claude Code", email: email, active: active)
         account.vaultID = email
-        account.windows = percents.enumerated().map { UsageWindow(name: $0.offset == 0 ? "5 h" : "7 días", percent: $0.element, resetsAt: Date().addingTimeInterval(3600)) }
+        account.windows = zip(names, percents).map { UsageWindow(name: $0.0, percent: $0.1, resetsAt: Date().addingTimeInterval(resets)) }
         account.usageFetched = Date().addingTimeInterval(-read)
         account.note = note
         return account
     }
 
-    @Test func suggestsTheAccountWithMostRoomOnlyWhenItIsWorthIt() {
+    /// The five readings from the Mac where the switch never happened.
+    static func realAccounts(active: String) -> [AgentAccount] {
+        [("a", [100, 68, 97]), ("b", [98, 88, 55]), ("c", [0, 60, 80]), ("d", [56, 6, 12]), ("e", [100, 66, 77])]
+            .map { account($0.0, active: $0.0 == active, $0.1) }
+    }
+
+    @Test func picksTheAccountWithMostRoomInItsFiveHourWindow() {
         var report = AccountsReport()
-        report.accounts = [Self.account("a", active: true, [93, 40]), Self.account("b", active: false, [30, 55]), Self.account("c", active: false, [5, 20])]
+        report.accounts = Self.realAccounts(active: "a")
         let suggestion = report.switchSuggestion(threshold: 90)
-        #expect(suggestion?.to.email == "c" && suggestion?.window.name == "5 h")
-        // An excluded account is never the destination: the next best one is.
-        #expect(report.switchSuggestion(threshold: 90, excluded: ["c"])?.to.email == "b")
-        // Below the threshold, or nobody with clear room, or only stale or failed readings: say nothing.
-        report.accounts[0] = Self.account("a", active: true, [80, 40])
+        // C's per-model quota at 80% does not rule it out, and its 5-hour window is empty.
+        #expect(suggestion?.to.email == "c" && suggestion?.from.email == "a" && suggestion?.window.name == "5 h")
+        #expect(suggestion?.window.percent == 100)
+    }
+
+    @Test func staysWhenTheAccountInUseIsBelowTheThreshold() {
+        var report = AccountsReport()
+        report.accounts = Self.realAccounts(active: "d")
         #expect(report.switchSuggestion(threshold: 90) == nil)
-        report.accounts = [Self.account("a", active: true, [95, 40]), Self.account("b", active: false, [30, 85]),
-                           Self.account("c", active: false, [5, 5], read: 7200), Self.account("d", active: false, [5, 5], note: "sin conexión")]
+        // A per-model quota over the threshold does not trigger a switch either.
+        report.accounts[3] = Self.account("d", active: true, [56, 6, 97])
         #expect(report.switchSuggestion(threshold: 90) == nil)
+    }
+
+    @Test func staysWhenNoOtherAccountIsBelowTheThreshold() {
+        var report = AccountsReport()
+        report.accounts = [Self.account("a", active: true, [95, 40]), Self.account("b", active: false, [90, 10]),
+                           Self.account("c", active: false, [20, 92]), Self.account("d", active: false, [99, 99, 5])]
+        #expect(report.switchSuggestion(threshold: 90) == nil)
+        // Stale readings and dead logins do not count as room.
+        report.accounts = [Self.account("a", active: true, [95, 40]), Self.account("c", active: false, [5, 5], read: 7200),
+                           Self.account("d", active: false, [5, 5], note: "sesión caducada: vuelve a iniciar sesión")]
+        #expect(report.switchSuggestion(threshold: 90) == nil)
+        // A read that failed for a moment keeps the last good figures while they are fresh.
+        report.accounts[2] = Self.account("d", active: false, [5, 5], note: "sin conexión")
+        #expect(report.switchSuggestion(threshold: 90)?.to.email == "d")
+        report.accounts[2] = Self.account("d", active: false, [5, 5], read: 7200, note: "límite de consultas; se reintenta luego")
+        #expect(report.switchSuggestion(threshold: 90) == nil)
+    }
+
+    @Test func aWindowThatAlreadyResetCountsAsEmpty() {
+        var report = AccountsReport()
+        // The account in use read 97% but that window has reset since: nothing to do.
+        report.accounts = [Self.account("a", active: true, [97, 40], resets: -60), Self.account("b", active: false, [5, 5])]
+        #expect(report.switchSuggestion(threshold: 90) == nil)
+        // A candidate whose full windows have reset is usable again, and the one with most room.
+        report.accounts = [Self.account("a", active: true, [97, 40]), Self.account("b", active: false, [30, 20]),
+                           Self.account("c", active: false, [100, 95], resets: -60)]
+        #expect(report.switchSuggestion(threshold: 90)?.to.email == "c")
+    }
+
+    @Test func neverPicksAnExcludedAccount() {
+        var report = AccountsReport()
+        report.accounts = Self.realAccounts(active: "a")
+        #expect(report.switchSuggestion(threshold: 90, excluded: ["c"])?.to.email == "d")
+        #expect(report.switchSuggestion(threshold: 90, excluded: ["c", "d"]) == nil)
+    }
+
+    @Test func needsTenPointsOfMarginInTheWindowThatRanOut() {
+        var report = AccountsReport()
+        // 92% in use, threshold 85: an account at 83% is below the threshold but only 9 points better.
+        report.accounts = [Self.account("a", active: true, [92, 40]), Self.account("b", active: false, [83, 10])]
+        #expect(report.switchSuggestion(threshold: 85) == nil)
+        report.accounts[1] = Self.account("b", active: false, [82, 10])
+        #expect(report.switchSuggestion(threshold: 85)?.to.email == "b")
+        // The weekly window triggers too, and then the margin is measured there; ties on 5 h go to the emptier week.
+        report.accounts = [Self.account("a", active: true, [10, 95]), Self.account("b", active: false, [10, 88]),
+                           Self.account("c", active: false, [10, 70]), Self.account("d", active: false, [10, 50])]
+        let suggestion = report.switchSuggestion(threshold: 90)
+        #expect(suggestion?.to.email == "d" && suggestion?.window.name == "7 días")
+        // Both over: the fuller window is the one reported.
+        report.accounts[0] = Self.account("a", active: true, [93, 98])
+        #expect(report.switchSuggestion(threshold: 90)?.window.name == "7 días")
+    }
+
+    @Test func aPlanWithoutAFiveHourWindowIsJudgedByItsWeek() {
+        var account = Self.account("b", active: false, [])
+        account.windows = [UsageWindow(name: "7 días", percent: 30, resetsAt: Date().addingTimeInterval(3600))]
+        var report = AccountsReport()
+        report.accounts = [Self.account("a", active: true, [95, 40]), account]
+        #expect(report.switchSuggestion(threshold: 90)?.to.email == "b")
     }
 }
 

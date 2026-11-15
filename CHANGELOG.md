@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.9
+
+- Gradle and Maven projects: `./gradlew bootRun` is shown and remembered as typed, with the port its app opens; Gradle's shared daemon is no longer taken for a project's server
+- Start does not collide: if the command already runs it says so, and if something else holds the port it offers to close it first
+- Remembered commands keep only real servers, the newest one per port; agents' one-off commands (git, gh, tail…) are no longer kept
+- Automatic account switching picks the saved account with the most room in its 5-hour window; per-model quotas no longer block it, an account that cannot be used is never chosen, and a switch that fails is retried a minute later instead of being reported as done
+- Automatic account switching keeps working in low-power game mode, and an account whose last read failed for a moment keeps its recent figures
+- Project infrastructure: a `devdeck.json` at the project's root declares its services (command, folder, port, health address) and its compose file. The project page shows which ones run and answer, and brings everything up or down with one button. DevDeck can write the file from the commands it remembers, without their environment
+- Sessions: every past Claude Code and Codex session on this Mac, with search over what was said and a button that opens it again in Terminal, in its own folder
+- An account per project: choose which saved Claude Code account a folder belongs to; DevDeck puts it in place before opening the agent there and tells when a session starts under another one
+- Each project shows its branches and worktrees (which one an agent works in, uncommitted changes, worktrees nobody uses any more with their size and a way to remove them) and the agent sessions that worked there
+- Day summary in Usage: per project, what the agents were asked, tokens, estimated cost and commits; copies as text
+- Optional Claude Code hooks, off by default: DevDeck hears at once that a session asks for a permission or finishes
+- Agents can ask, through `devdeck mcp`, to free a port or restart a server; each request needs your approval in DevDeck
+- "Tell me when it resets" on any account window; it arms itself when the account in use runs out
+- Command line: `devdeck sessions`, `devdeck branches` and `devdeck today`
+
 ## 0.1.8
 
 - A single Claude Code login shows its limits in the menu bar and in the app without saving it as an account first

@@ -18,6 +18,38 @@ public struct LaunchRecipe: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var commandLine: String { argv.joined(separator: " ") }
+
+    /// Commands that end by themselves (a status, a search, a copy): never something to start again.
+    static let oneOff: Set<String> = ["git", "gh", "du", "head", "tail", "cat", "ls", "grep", "rg", "find", "sed", "awk", "wc", "sort", "uniq",
+                                      "curl", "jq", "sleep", "echo", "which", "open", "osascript", "simctl", "xcrun", "defaults", "security",
+                                      "ps", "lsof", "kill", "pkill", "rm", "cp", "mv", "mkdir", "touch", "chmod", "tee", "xargs", "env", "true"]
+
+    /// A Gradle or Maven JVM line becomes the command that was typed; other commands stay as they are.
+    public func typed() -> LaunchRecipe {
+        guard let user = JavaLaunch.userCommand(argv, cwd: cwd) else { return self }
+        var copy = self
+        copy.argv = user
+        copy.label = Fmt.shortCommand(user, max: 3)
+        return copy
+    }
+
+    /// What is worth keeping from remembered commands: build-tool lines in the form they were typed, without
+    /// one-off commands or Gradle's own daemon, and the newest command for each port.
+    public static func cleaned(_ list: [LaunchRecipe]) -> [LaunchRecipe] {
+        var out: [LaunchRecipe] = []
+        var ports = Set<UInt16>()
+        for recipe in list.map({ $0.typed() }) {
+            guard let first = recipe.argv.first else { continue }
+            let kind = JavaLaunch.kind(recipe.argv)
+            if kind == .gradleDaemon || kind == .gradleWorker { continue }
+            if recipe.ports.isEmpty, oneOff.contains((first as NSString).lastPathComponent) { continue }
+            if out.contains(where: { $0.id == recipe.id }) { continue }
+            if !recipe.ports.isEmpty, !ports.isDisjoint(with: recipe.ports) { continue }
+            ports.formUnion(recipe.ports)
+            out.append(recipe)
+        }
+        return out
+    }
 }
 
 public enum ProcessControlError: LocalizedError {

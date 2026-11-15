@@ -222,6 +222,14 @@ struct SettingsView: View {
                     row(L("Avisar cuando un agente espera"), L("Cuando Claude Code termina un turno largo o se detiene a preguntar")) {
                         Toggle("", isOn: $model.settings.notifyAgentWaiting).labelsHidden().toggleStyle(.switch)
                     }
+                    row(L("Dejar que los agentes pidan acciones"),
+                        L("Con el servidor MCP de DevDeck, un agente puede pedir que se libere un puerto o se reinicie un servidor. Cada petición te aparece para aprobarla; sin tu aprobación no se hace nada.")) {
+                        Toggle("", isOn: $model.settings.agentRequests).labelsHidden().toggleStyle(.switch)
+                    }
+                    row(L("Aviso al momento con hooks de Claude Code"),
+                        L("Añade tres hooks a ~/.claude/settings.json para saber al instante cuándo una sesión pide permiso o termina. Solo anotan el aviso; no cambian lo que hace el agente. Se guarda una copia del archivo.")) {
+                        Toggle("", isOn: Binding(get: { model.settings.claudeHooks }, set: { model.setClaudeHooks($0) })).labelsHidden().toggleStyle(.switch)
+                    }
                 }
                 case .monitoring:
                 Panel(L("Monitoreo"), symbol: "waveform.path.ecg") {

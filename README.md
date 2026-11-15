@@ -134,6 +134,22 @@ That also puts a `devdeck` command on your PATH.
 
 DevDeck checks for new versions once a day and shows you the release notes. It never installs anything by itself: updating is one click, and the download is verified to be signed and notarized before it replaces the app.
 
+## Project infrastructure
+
+Put a `devdeck.json` at the root of a project (DevDeck can write it from the commands it has seen you run) and commit it:
+
+```json
+{
+  "services": [
+    { "name": "web", "command": "pnpm dev", "port": 3000, "health": "/api/health" },
+    { "name": "api", "command": "tsx watch src/server.ts", "dir": "apps/api", "port": 4000 }
+  ],
+  "compose": "docker-compose.yml"
+}
+```
+
+The project page then shows which services run and answer, and brings the whole project up or down with one button. The file holds no environment variables.
+
 ## Command line and MCP
 
 The app's binary answers from a terminal too, without opening the window:
@@ -143,11 +159,14 @@ devdeck status          # memory, swap, CPU, disk and what uses the most
 devdeck top             # what is using memory and CPU, by origin
 devdeck ports           # listening ports and who owns them
 devdeck agents --json   # tokens each coding agent spent
+devdeck sessions "coupon"   # past agent sessions where that was said
+devdeck branches        # branches and worktrees agents worked in
+devdeck today           # the day per project: tokens, sessions, commits
 ```
 
 Without Homebrew, link it yourself: `ln -s /Applications/DevDeck.app/Contents/MacOS/DevDeck /usr/local/bin/devdeck`.
 
-`devdeck mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so a coding agent can check the machine before it starts another server. Its four tools (`system_status`, `top_consumers`, `listening_ports`, `agent_usage`) only read.
+`devdeck mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so a coding agent can check the machine before it starts another server. Its reading tools (`system_status`, `top_consumers`, `listening_ports`, `agent_usage`, `branches`, `today`) change nothing. Two more, `request_free_port` and `request_restart_server`, let the agent ask: DevDeck shows you the request and nothing happens unless you approve it there.
 
 ```bash
 claude mcp add devdeck -- devdeck mcp

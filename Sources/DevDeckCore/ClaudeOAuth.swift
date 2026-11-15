@@ -14,6 +14,9 @@ public struct AccountUsage: Codable, Hashable, Sendable {
     public var note: String?
     public init() {}
 
+    /// Notes for a read that failed for a moment: the last good figures still stand while they are fresh.
+    public static let transientNotes: Set<String> = ["sin conexión", "límite de consultas; se reintenta luego"]
+
     public func usageWindows(now: Date = Date()) -> [UsageWindow] {
         windows.map { UsageWindow(name: $0.name, percent: $0.percent, resetsAt: $0.resetsAt,
                                   willLast: ClaudeOAuth.willLast(name: $0.name, percent: $0.percent, resetsAt: $0.resetsAt, at: fetchedAt ?? now)) }

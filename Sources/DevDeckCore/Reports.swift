@@ -3,7 +3,7 @@ import Foundation
 /// What the Mac is doing, as plain data: the same reading the app shows, for the command line and for agents.
 /// Everything here only reads.
 public enum Reports {
-    public static let topics = ["status", "top", "ports", "agents"]
+    public static let topics = ["status", "top", "ports", "agents", "sessions", "branches", "today"]
 
     /// Two samples a moment apart, so CPU figures mean something.
     public static func sample() async -> (Snapshot, SystemSample) {
@@ -57,6 +57,18 @@ public enum Reports {
         return String(decoding: data, as: UTF8.self)
     }
 
+    public static func branches(_ repos: [GitRepo]) -> [[String: Any]] {
+        repos.flatMap { repo in
+            repo.worktrees.map { tree -> [String: Any] in
+                var row: [String: Any] = ["repository": repo.name, "folder": tree.path, "branch": tree.branch ?? "(detached \(tree.head))",
+                                          "worktree": !tree.isMain, "uncommitted": tree.changes, "ahead": tree.ahead, "behind": tree.behind]
+                if let size = tree.sizeBytes { row["size_gb"] = gb(size) }
+                if let commit = tree.lastCommit { row["last_commit"] = ISO8601DateFormatter().string(from: commit) }
+                return row
+            }
+        }
+    }
+
     /// Aligned columns for a terminal.
     public static func table(_ rows: [[String: Any]], columns: [String]) -> String {
         func text(_ value: Any?) -> String {
@@ -77,12 +89,28 @@ public enum Reports {
 }
 
 /// A Model Context Protocol server over stdio: lets a coding agent ask what the Mac is doing before it starts
-/// another dev server or wonders why the machine is slow. Read-only tools; nothing is closed or changed from here.
+/// another dev server or wonders why the machine is slow. Most tools only read. The two that ask for something to be
+/// done only pass the request on: the person approves or refuses it in DevDeck, and nothing runs from here.
 public struct MCPServer: Sendable {
-    public struct Tool: Sendable {
+    public struct Tool: @unchecked Sendable {
         public let name: String
         public let description: String
-        public let run: @Sendable () async -> Any
+        /// JSON Schema of each argument, by name.
+        public let properties: [String: Any]
+        public let required: [String]
+        public let readOnly: Bool
+        public let run: @Sendable ([String: Any]) async -> Any
+
+        public init(name: String, description: String, run: @escaping @Sendable () async -> Any) {
+            self.name = name; self.description = description; properties = [:]; required = []; readOnly = true
+            self.run = { _ in await run() }
+        }
+
+        public init(name: String, description: String, properties: [String: Any], required: [String], readOnly: Bool,
+                    call: @escaping @Sendable ([String: Any]) async -> Any) {
+            self.name = name; self.description = description; self.properties = properties; self.required = required
+            self.readOnly = readOnly; run = call
+        }
     }
 
     public let tools: [Tool]
@@ -102,14 +130,20 @@ public struct MCPServer: Sendable {
         case "ping": return reply([String: Any]())
         case "tools/list":
             return reply(["tools": tools.map { ["name": $0.name, "description": $0.description,
-                                                "inputSchema": ["type": "object", "properties": [String: Any](), "additionalProperties": false] as [String: Any],
-                                                "annotations": ["readOnlyHint": true]] as [String: Any] }])
+                                                "inputSchema": ["type": "object", "properties": $0.properties, "required": $0.required,
+                                                                "additionalProperties": false] as [String: Any],
+                                                "annotations": ["readOnlyHint": $0.readOnly]] as [String: Any] }])
         case "tools/call":
-            let name = (request["params"] as? [String: Any])?["name"] as? String
+            let params = request["params"] as? [String: Any]
+            let name = params?["name"] as? String
+            let arguments = (params?["arguments"] as? [String: Any]) ?? [:]
             guard let tool = tools.first(where: { $0.name == name }) else {
                 return reply(["content": [["type": "text", "text": "Unknown tool: \(name ?? "")"]], "isError": true] as [String: Any])
             }
-            return reply(["content": [["type": "text", "text": Reports.json(await tool.run())]]])
+            if let missing = tool.required.first(where: { arguments[$0] == nil }) {
+                return reply(["content": [["type": "text", "text": "Missing argument: \(missing)"]], "isError": true] as [String: Any])
+            }
+            return reply(["content": [["type": "text", "text": Reports.json(await tool.run(arguments))]]])
         default:
             return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Method not found"] as [String: Any]]
         }
@@ -125,8 +159,21 @@ public struct MCPServer: Sendable {
         }
     }
 
-    public static func standard(version: String) -> MCPServer {
+    /// A tool that asks the person, through DevDeck, to allow one action on a port.
+    static func requestTool(name: String, action: String, description: String, base: URL) -> Tool {
+        Tool(name: name, description: description,
+             properties: ["port": ["type": "integer", "minimum": 1, "maximum": 65_535, "description": "TCP port on this Mac."] as [String: Any],
+                          "reason": ["type": "string", "description": "One sentence the person will read: why you need this."] as [String: Any]],
+             required: ["port"], readOnly: false) { arguments in
+            guard let port = (arguments["port"] as? NSNumber)?.intValue else { return ["approved": false, "done": false, "detail": "port must be a number."] as [String: Any] }
+            return await AgentRequests.ask(AgentRequest(action: action, port: port, reason: arguments["reason"] as? String), base: base)
+        }
+    }
+
+    public static func standard(version: String, base: URL = JSONStore().directory) -> MCPServer {
         MCPServer(version: version, tools: [
+            requestTool(name: "request_free_port", action: "free_port", description: "Ask the person at this Mac to stop whatever is listening on a TCP port, so you can use it. DevDeck shows them the request and nothing is stopped unless they approve; they have about 90 seconds. Returns whether it was approved and done. Check listening_ports first.", base: base),
+            requestTool(name: "request_restart_server", action: "restart_server", description: "Ask the person at this Mac to restart the dev server listening on a TCP port, with the same command and environment. DevDeck shows them the request and nothing is restarted unless they approve; they have about 90 seconds. Returns whether it was approved and done.", base: base),
             Tool(name: "system_status", description: "Memory, swap, CPU, disk and memory pressure of this Mac right now, and what uses the most memory.") {
                 let (snapshot, system) = await Reports.sample()
                 return Reports.status(snapshot, system)
@@ -136,6 +183,13 @@ public struct MCPServer: Sendable {
             },
             Tool(name: "listening_ports", description: "Every TCP port being listened on, with the process and the project or app that owns it. Check this before starting a server on a port.") {
                 Reports.ports(await Reports.sample().0)
+            },
+            Tool(name: "branches", description: "Branches and git worktrees of the repositories coding agents worked in during the last two weeks: uncommitted files, commits ahead and behind, and disk size of each extra worktree.") {
+                let recent = Date().addingTimeInterval(-14 * 86_400)
+                return Reports.branches(await GitWork.scan(folders: SessionLibrary.list().filter { $0.modified >= recent }.map(\.folder)))
+            },
+            Tool(name: "today", description: "What coding agents did today on this Mac, per project: tokens, cost at API list prices, session titles and commits.") {
+                DailyDigests.report(await DailyDigests.load(day: AgentUsageReport.dayString(Date()), env: ProcessInfo.processInfo.environment, prices: PriceTable()))
             },
             Tool(name: "agent_usage", description: "Tokens each coding agent (Claude Code, Codex and others) spent today and in the last 7 days on this Mac, read from their local logs.") {
                 Reports.agents(await AgentUsageScanner().scan(days: 7, env: ProcessInfo.processInfo.environment))

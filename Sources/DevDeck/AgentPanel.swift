@@ -63,6 +63,172 @@ extension AppModel {
         }.value
         if found != activities { activities = found }
         announceWaiting(waitTracker.update(sessions))
+        checkFolderAccounts(sessions)
+    }
+
+    // MARK: Claude Code hooks
+
+    var hookCommand: String { ClaudeHooks.command(binary: Bundle.main.executablePath ?? CommandLine.arguments[0]) }
+
+    /// Turns the hooks on or off in Claude Code's settings. Only DevDeck's own entries are touched.
+    func setClaudeHooks(_ on: Bool) {
+        do {
+            try ClaudeHooks.apply(command: on ? hookCommand : nil)
+            settings.claudeHooks = on
+            saveSettings()
+            show(on ? L("Hooks instalados. Las sesiones nuevas de Claude Code avisan al momento.") : L("Hooks quitados de Claude Code."))
+        } catch {
+            show(error.localizedDescription)
+        }
+    }
+
+    /// The app moved or was updated to another place: point the hooks at where it is now.
+    func repairClaudeHooks() {
+        guard settings.claudeHooks, let installed = ClaudeHooks.installedCommand(), installed != hookCommand else { return }
+        try? ClaudeHooks.apply(command: hookCommand)
+    }
+
+    func readHookEvents() async {
+        let read = ClaudeHooks.read(directory: store.directory, from: hookOffset)
+        hookOffset = read.offset
+        guard !read.events.isEmpty else { return }
+        for event in read.events {
+            if event.asksForInput {
+                let message = event.message ?? L("Pide permiso")
+                hookWaiting[event.sessionID] = message
+                guard settings.notifyAgentWaiting, !headless else { continue }
+                if let told = waitAnnounced[event.sessionID], Date().timeIntervalSince(told) < 20 { continue }
+                waitAnnounced[event.sessionID] = Date()
+                let folder = event.cwd == NSHomeDirectory() ? "~" : (event.cwd as NSString).lastPathComponent
+                let title = L("Claude Code necesita tu respuesta")
+                let body = folder.isEmpty ? message : folder + " — " + message
+                pushAlert(AlertEvent(title: title, message: body, severity: .info))
+                presentAlert(title: title, body: body, severity: .info)
+                notify(title: title, body: body, severity: .info)
+            } else if event.event != "Notification" {
+                hookWaiting[event.sessionID] = nil
+            }
+        }
+        // Whatever it was, the sessions changed: look now instead of at the next round.
+        await refreshLiveSessions()
+    }
+
+    // MARK: Requests from agents
+
+    /// What an agent asked for, in the person's words, and what it would touch.
+    func describe(_ request: AgentRequest) -> (title: String, body: String) {
+        let binding = snapshot.ports.first { Int($0.port) == request.port }
+        let title = request.action == "restart_server" ? L("Un agente pide reiniciar el servidor de :%d", request.port)
+                                                       : L("Un agente pide liberar el puerto :%d", request.port)
+        var parts: [String] = []
+        if let binding { parts.append("\(binding.processName) · \(binding.groupName)") } else { parts.append(L("Nada escucha ahí ahora")) }
+        if let reason = request.reason, !reason.isEmpty { parts.append(L("Motivo: %@", reason)) }
+        return (title, parts.joined(separator: " — "))
+    }
+
+    /// Requests that arrived through `devdeck mcp`: each one is shown once, and only an approval runs it.
+    func checkAgentRequests() {
+        let base = store.directory
+        guard settings.agentRequests, !headless else { return }
+        AgentRequests.heartbeat(base: base)
+        for request in AgentRequests.pending(base: base) where shownRequests.insert(request.id).inserted {
+            let text = describe(request)
+            pushAlert(AlertEvent(title: text.title, message: text.body, severity: .info))
+            notify(title: text.title, body: text.body, severity: .info)
+            presentAlert(title: text.title, body: text.body, severity: .warning, actionLabel: L("Aprobar"), seconds: AgentRequests.patience - 10,
+                         action: { [weak self] in Task { await self?.run(request) } },
+                         onDismiss: { AgentRequests.answer(AgentRequestResult(id: request.id, approved: false, done: false, detail: "The person refused."), base: base) })
+        }
+    }
+
+    /// Runs an approved request with the same actions the Ports page offers.
+    func run(_ request: AgentRequest) async {
+        let base = store.directory
+        func answer(_ done: Bool, _ detail: String) {
+            AgentRequests.answer(AgentRequestResult(id: request.id, approved: true, done: done, detail: detail), base: base)
+        }
+        guard let binding = snapshot.ports.first(where: { Int($0.port) == request.port }) else {
+            answer(request.action == "free_port", "Nothing is listening on port \(request.port).")
+            return
+        }
+        if let root = binding.serviceRootPid, let found = snapshot.service(rootPid: root) {
+            if request.action == "restart_server" {
+                await restart(service: found.1, in: found.0)
+                answer(true, "Restarted \(found.1.label) with the same command.")
+            } else {
+                await stop(service: found.1, in: found.0)
+                answer(true, "Stopped \(found.1.label); port \(request.port) is free. Its command is kept so it can be started again.")
+            }
+            return
+        }
+        guard request.action == "free_port" else {
+            answer(false, "Port \(request.port) belongs to \(binding.processName), which DevDeck does not know how to restart.")
+            return
+        }
+        guard binding.groupKind != .system, binding.container == nil else {
+            answer(false, "Port \(request.port) belongs to \(binding.container.map { "container \($0)" } ?? "the system"); DevDeck leaves it alone.")
+            return
+        }
+        await kill(pid: binding.pid)
+        answer(true, "Closed \(binding.processName) (pid \(binding.pid)); port \(request.port) is free.")
+    }
+
+    // MARK: Account per folder
+
+    /// The saved Claude Code account a folder's work belongs to, when one was assigned to it or to a folder above.
+    func folderAccount(for folder: String) -> AgentAccount? {
+        guard let id = FolderAccounts.account(for: folder, in: settings.folderAccounts) else { return nil }
+        return accounts.accounts.first { $0.agent == "Claude Code" && $0.vaultID == id }
+    }
+
+    func setFolderAccount(_ folder: String, _ account: AgentAccount?) {
+        let key = (folder as NSString).standardizingPath
+        settings.folderAccounts[key] = account?.vaultID
+        saveSettings()
+    }
+
+    /// Puts the folder's account in place before an agent is opened there. False when it could not.
+    func useFolderAccount(for folder: String) async -> Bool {
+        guard let wanted = folderAccount(for: folder), !wanted.active else { return true }
+        await switchClaudeAccount(wanted)
+        return activeClaudeAccount?.vaultID == wanted.vaultID
+    }
+
+    /// Opens Claude Code in Terminal in that folder, under the folder's account.
+    func openAgent(in folder: String, arguments: [String] = []) async {
+        guard let binary = LoginEnvironment.which("claude", env: loginEnv) else {
+            show(L("No se encontró %@ en este Mac", "claude"))
+            return
+        }
+        guard await useFolderAccount(for: folder) else { return }
+        let file = store.directory.appendingPathComponent("open-agent.command")
+        do {
+            try SessionLibrary.launchScript(folder: folder, binaryPath: binary, arguments: arguments).write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+            NSWorkspace.shared.open(file)
+        } catch {
+            show(error.localizedDescription)
+        }
+    }
+
+    /// A session that just started in a folder that belongs to another account: say so, with a button to switch.
+    /// The login is one for the whole Mac, so nothing is switched behind a running session's back.
+    func checkFolderAccounts(_ sessions: [LiveAgentSession]) {
+        let ids = Set(sessions.map(\.sessionID))
+        guard let seen = folderChecked else { folderChecked = ids; return }
+        folderChecked = ids
+        guard !settings.folderAccounts.isEmpty, !headless else { return }
+        for session in sessions where !seen.contains(session.sessionID) && AgentWaitTracker.isAttended(session) {
+            guard let wanted = folderAccount(for: session.cwd), !wanted.active, switchingAccount == nil else { continue }
+            let folder = (session.cwd as NSString).lastPathComponent
+            let name = wanted.alias ?? wanted.email
+            let title = L("%@ va con %@", folder, name)
+            let body = L("Esta sesión empezó con otra cuenta. Cambia y vuelve a abrirla para que use la suya.")
+            pushAlert(AlertEvent(title: title, message: body, severity: .info))
+            presentAlert(title: title, body: body, severity: .warning, actionLabel: L("Cambiar de cuenta"), seconds: 20) { [weak self] in
+                Task { await self?.switchClaudeAccount(wanted) }
+            }
+        }
     }
 
     /// An agent that worked for a while and now waits is easy to miss behind other windows.
@@ -70,6 +236,9 @@ extension AppModel {
         guard settings.notifyAgentWaiting, !headless else { return }
         for event in events {
             let session = event.session
+            // Already told a moment ago by a hook.
+            if let told = waitAnnounced[session.sessionID], Date().timeIntervalSince(told) < 90 { continue }
+            waitAnnounced[session.sessionID] = Date()
             let folder = session.cwd == NSHomeDirectory() ? "~" : (session.cwd as NSString).lastPathComponent
             let place = [folder, session.name ?? "", session.waitingFor ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
             let title = event.reason == .needsInput ? L("Claude Code necesita tu respuesta") : L("Claude Code terminó y espera")
@@ -103,6 +272,45 @@ extension AppModel {
         accounts = await AgentAccounts.load(env: loginEnv, codexPlan: codexPlan, vault: vault, usage: usage)
         applySessionPace()
         suggestAccountSwitch()
+        checkResetNotices()
+    }
+
+    // MARK: Notice at reset
+
+    func isResetNoticeArmed(_ account: AgentAccount, _ window: UsageWindow) -> Bool { settings.resetNotices[account.resetKey(window)] != nil }
+
+    /// "Tell me when it resets" for one window; pressing again takes it back.
+    func toggleResetNotice(_ account: AgentAccount, _ window: UsageWindow) {
+        let key = account.resetKey(window)
+        if settings.resetNotices[key] != nil {
+            settings.resetNotices[key] = nil
+        } else if let resets = window.resetsAt, resets > Date() {
+            settings.resetNotices[key] = resets.timeIntervalSince1970
+            show(L("Te aviso cuando reinicie la ventana de %@ (%@)", L(window.name), relative(resets)))
+        }
+        saveSettings()
+    }
+
+    func checkResetNotices() {
+        var armed = settings.resetNotices
+        // Out of quota on the account in use: the notice arms itself.
+        if let active = activeClaudeAccount { armed = ResetNotices.autoArm(active, armed: armed) }
+        let due = ResetNotices.due(armed)
+        for key in due.fired {
+            let parts = key.components(separatedBy: "|")
+            let window = parts.last ?? ""
+            let account = accounts.accounts.first { $0.resetKey(UsageWindow(name: window, percent: 0, resetsAt: nil)) == key }
+            let name = account.map { $0.alias ?? $0.email } ?? (parts.count > 2 ? parts[1] : "")
+            let title = L("La ventana de %@ se reinició", L(window))
+            let body = L("%@ vuelve a tener límite disponible.", name)
+            pushAlert(AlertEvent(title: title, message: body, severity: .info))
+            presentAlert(title: title, body: body, severity: .info, seconds: 12)
+            notify(title: title, body: body, severity: .info, force: true)
+        }
+        if due.waiting != settings.resetNotices {
+            settings.resetNotices = due.waiting
+            saveSettings()
+        }
     }
 
     /// "Runs out in ~35 min at this pace" for the 5-hour window of the Claude Code account in use.
@@ -127,14 +335,20 @@ extension AppModel {
               let suggestion = accounts.switchSuggestion(threshold: settings.accountSwitchPercent, excluded: Set(settings.accountSwitchExcluded)) else { return }
         let from = suggestion.from.alias ?? suggestion.from.email, to = suggestion.to.alias ?? suggestion.to.email
         let title = L("%@ al %d%% en la ventana de %@", from, Int(suggestion.window.percent.rounded()), L(suggestion.window.name))
-        let room = suggestion.to.windows.map(\.percent).max() ?? 0
+        // What the switch was decided on: the target's 5-hour window, or its week on plans without one.
+        let room = suggestion.to.percentNow("5 h") ?? suggestion.to.percentNow("7 días") ?? 0
         if mode == "auto" {
             // Never bounce between accounts: one automatic switch every ten minutes at most.
             guard Date().timeIntervalSince(lastAutoSwitch) > 600 else { return }
             lastAutoSwitch = Date()
             Task {
-                await switchClaudeAccount(suggestion.to)
+                // Said only when it happened; a switch that failed is tried again in a minute, not in ten.
+                guard await switchClaudeAccount(suggestion.to) else {
+                    lastAutoSwitch = Date().addingTimeInterval(-540)
+                    return
+                }
                 let body = L("Cambio automático a %@ (%d%% usado).", to, Int(room.rounded()))
+                pushAlert(AlertEvent(title: title, message: body, severity: .info))
                 presentAlert(title: title, body: body, severity: .info, seconds: 12)
                 notify(title: title, body: body, severity: .info)
             }
@@ -177,9 +391,11 @@ extension AppModel {
         snapshot.processes.values.filter { $0.isMine && ($0.name == "codex" || $0.executablePath.hasSuffix("/codex")) }.count
     }
 
-    /// Switches the Claude Code login. Only ever called from an explicit confirmation.
-    func switchClaudeAccount(_ account: AgentAccount) async {
-        guard switchingAccount == nil else { return }
+    /// Switches the Claude Code login: from an explicit confirmation, or by itself when the user chose automatic switching.
+    /// True when the login was changed.
+    @discardableResult
+    func switchClaudeAccount(_ account: AgentAccount) async -> Bool {
+        guard switchingAccount == nil else { return false }
         switchingAccount = account.id
         defer { switchingAccount = nil }
         if let id = account.vaultID, let vault {
@@ -197,9 +413,9 @@ extension AppModel {
                 pushAlert(AlertEvent(title: L("Cuenta cambiada"), message: account.email, severity: .info))
             }
             await refreshAccounts()
-            return
+            return failure == nil
         }
-        guard let number = account.number, let path = accounts.switcherPath else { return }
+        guard let number = account.number, let path = accounts.switcherPath else { return false }
         let result = await AgentAccounts.switchClaude(to: number, switcherPath: path, env: loginEnv)
         if result.ok {
             show(L("Claude Code ahora usa %@", account.email))
@@ -209,6 +425,7 @@ extension AppModel {
             show(L("No se pudo cambiar de cuenta: %@", String(detail.suffix(160))))
         }
         await refreshAccounts()
+        return result.ok
     }
 
     /// Copies claude-swap's accounts into DevDeck's own store. claude-swap's data is left as it is.
@@ -335,7 +552,7 @@ extension AppModel {
                                           state: busy ? .working : .idle, entry: live.entrypoint, model: transcript?.model ?? "",
                                           load: load, tokens: transcript?.tokens, lastActivity: transcript?.lastActivity ?? live.updatedAt,
                                           file: transcript?.file, pid: live.pid, subagents: subagents,
-                                          activity: activities[live.sessionID], waitingFor: live.waitingFor))
+                                          activity: activities[live.sessionID], waitingFor: live.waitingFor ?? hookWaiting[live.sessionID]))
         }
 
         // Every other agent: its processes grouped by the folder they work in.

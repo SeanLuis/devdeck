@@ -8,6 +8,11 @@ import UserNotifications
 enum Entry {
     static func main() {
         let args = CommandLine.arguments
+        // Called by Claude Code's hooks: note what it says and leave at once, printing nothing.
+        if args.count > 2, args[1] == "hook", args[2] == "--devdeck" {
+            ClaudeHooks.record(FileHandle.standardInput.readDataToEndOfFile(), directory: JSONStore().directory)
+            return
+        }
         if let index = args.firstIndex(of: "--record"), args.count > index + 1 {
             MainActor.assumeIsolated { SnapshotRunner.record(outDir: args[index + 1]) }
             return
@@ -397,6 +402,32 @@ enum CLI {
                 let usage = await AgentUsageScanner().scan(days: 7, env: ProcessInfo.processInfo.environment)
                 let rows = Reports.agents(usage, prices: PriceTable.load(directory: JSONStore().directory))
                 print(json ? Reports.json(rows) : Reports.table(rows, columns: ["agent", "tokens_today", "tokens_7_days", "responses_7_days", "list_price_usd_7_days"]))
+            case "today":
+                let digest = await DailyDigests.load(day: AgentUsageReport.dayString(Date()), env: ProcessInfo.processInfo.environment,
+                                                     prices: PriceTable.load(directory: JSONStore().directory))
+                print(json ? Reports.json(DailyDigests.report(digest)) : DailyDigests.markdown(digest))
+            case "branches":
+                let recent = Date().addingTimeInterval(-14 * 86_400)
+                let repos = await GitWork.scan(folders: SessionLibrary.list().filter { $0.modified >= recent }.map(\.folder))
+                let rows = Reports.branches(repos)
+                print(json ? Reports.json(rows) : Reports.table(rows, columns: ["repository", "branch", "worktree", "uncommitted", "ahead", "behind", "size_gb"]))
+            case "sessions":
+                let all = SessionLibrary.list()
+                let query = CommandLine.arguments.dropFirst(2).first { !$0.hasPrefix("--") }
+                var rows: [[String: Any]] = []
+                for entry in all {
+                    var row: [String: Any] = ["agent": entry.agent, "title": entry.title, "folder": entry.folder, "session": entry.sessionID,
+                                              "last_used": ISO8601DateFormatter().string(from: entry.modified)]
+                    if let branch = entry.branch { row["branch"] = branch }
+                    if let query {
+                        guard let hit = SessionLibrary.search(query, in: entry) else { continue }
+                        row["match"] = hit.snippet
+                        row["mentions"] = hit.count
+                    }
+                    rows.append(row)
+                    if rows.count >= (query == nil ? 30 : 20) { break }
+                }
+                print(json ? Reports.json(rows) : Reports.table(rows, columns: ["agent", "last_used", "folder", "title"] + (query == nil ? [] : ["match"])))
             default:
                 print("""
                 devdeck \(version)
@@ -405,6 +436,9 @@ enum CLI {
                   devdeck top      what is using memory and CPU, by origin
                   devdeck ports    listening ports and who owns them
                   devdeck agents   tokens each coding agent spent (today and 7 days)
+                  devdeck sessions [text]   past agent sessions, or the ones where that text was said
+                  devdeck branches          branches and worktrees of the repositories agents worked in
+                  devdeck today             today per project: tokens, list price, sessions and commits
                   devdeck mcp      Model Context Protocol server over stdio (read-only tools)
 
                 Add --json for machine-readable output. With no command, the app opens.

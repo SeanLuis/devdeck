@@ -94,6 +94,32 @@ final class AppModel {
     var switchingAccount: String?
     /// Agent whose login DevDeck is waiting for ("Añadir cuenta").
     var addingAccount: String?
+    /// Past sessions of the agents, and the search over what was said in them.
+    var sessionLibrary: [SessionEntry] = []
+    var sessionHits: [SessionHit]?
+    var sessionsLoading = false
+    var sessionSearching = false
+    var sessionProgress = 0
+    var sessionSearchTotal = 0
+    @ObservationIgnored var sessionSearchTask: Task<Void, Never>?
+    /// Sessions already checked against their folder's account (nil until the first look).
+    @ObservationIgnored var folderChecked: Set<String>?
+    /// Branches, worktrees and sessions of each project that was opened, by its folder.
+    var projectWork: [String: ProjectWork] = [:]
+    @ObservationIgnored var projectWorkLoading: String?
+    /// Each opened project's `devdeck.json` and whether its services answer.
+    var projectManifests: [String: ProjectManifest] = [:]
+    var projectHealth: [String: [String: ServiceHealth]] = [:]
+    var manifestErrors: [String: String] = [:]
+    var digest: DailyDigest?
+    var digestLoading = false
+    /// What a hook said a session is waiting for, until the session moves on.
+    var hookWaiting: [String: String] = [:]
+    @ObservationIgnored var hookOffset: UInt64 = 0
+    /// Requests from agents already shown to the person.
+    @ObservationIgnored var shownRequests: Set<String> = []
+    /// When each session was last announced as waiting, so a hook and the periodic look do not both tell.
+    @ObservationIgnored var waitAnnounced: [String: Date] = [:]
     /// Codex's limits as Codex itself reports them, and when they were asked.
     @ObservationIgnored var codexLive: CodexPlan?
     @ObservationIgnored var codexAskedAt: Date = .distantPast
@@ -227,7 +253,7 @@ final class AppModel {
         L10n.language = loaded.language
         rules = store.load("rules.json", as: [Rule].self) ?? Rule.defaults
         alerts = store.load("alerts.json", as: [AlertEvent].self) ?? []
-        recipes = store.load("recipes.json", as: [String: [LaunchRecipe]].self) ?? [:]
+        recipes = (store.load("recipes.json", as: [String: [LaunchRecipe]].self) ?? [:]).mapValues(LaunchRecipe.cleaned).filter { !$0.value.isEmpty }
         // New default rules (e.g. swap) for people with an older rules.json.
         for rule in Rule.defaults where !rules.contains(where: { $0.metric == rule.metric && $0.targetGroupID == nil }) {
             rules.append(rule)
@@ -278,6 +304,18 @@ final class AppModel {
                 while !Task.isCancelled {
                     await self?.refreshAgentUsage()
                     try? await Task.sleep(nanoseconds: 90_000_000_000)
+                }
+            }
+            Task { [weak self] in
+                // Hooks, when the user turned them on: what Claude Code says is heard within a second.
+                guard let self, !self.demo else { return }
+                ClaudeHooks.trim(directory: self.store.directory)
+                self.hookOffset = ClaudeHooks.read(directory: self.store.directory, from: 0).offset
+                self.repairClaudeHooks()
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    if self.settings.claudeHooks { await self.readHookEvents() }
+                    self.checkAgentRequests()
                 }
             }
             Task { [weak self] in
@@ -398,7 +436,8 @@ final class AppModel {
             }
         }
         for group in snap.groups where group.kind == .project {
-            for service in group.services where !capturedRoots.contains(service.rootPid) {
+            // Only real servers, once they listen: agents' git, gh and tail calls are not something to start again.
+            for service in group.services where !capturedRoots.contains(service.rootPid) && !service.ports.isEmpty {
                 capturedRoots.insert(service.rootPid)
                 Task { await self.captureRecipe(service: service, group: group) }
             }
@@ -443,7 +482,7 @@ final class AppModel {
         guard let ctx = await sampler.launchContext(of: service.rootPid), !ctx.args.isEmpty else { return nil }
         let root = group.projectRoot ?? service.cwd ?? NSHomeDirectory()
         let recipe = LaunchRecipe(projectRoot: root, cwd: service.cwd ?? root, argv: ProcessControl.normalizedArgv(ctx.args),
-                                  env: ctx.env, label: service.label, ports: service.ports)
+                                  env: ctx.env, label: service.label, ports: service.ports).typed()
         remember(recipe)
         return recipe
     }
@@ -681,14 +720,14 @@ final class AppModel {
         }
         show(L("Deteniendo %@…", service.label))
         await terminateVerified(service.pids)
-        let free = await ProcessControl.waitUntilFree(ports: service.ports)
+        // Gradle and Spring take a while to let go of the port; if it is still held, Start asks before closing anything.
+        await ProcessControl.waitUntilFree(ports: service.ports, timeout: 20)
         if !cachePaths.isEmpty {
             show(L("Limpiando caché…"))
             let failures = await deletePaths(cachePaths)
             if !failures.isEmpty { pushAlert(AlertEvent(title: L("Limpieza incompleta"), message: failures.joined(separator: "; "), severity: .warning)) }
         }
         launch(recipe)
-        if !free { show(L("Arrancado %@, pero el puerto %@ seguía ocupado", service.label, service.ports.map(String.init).joined(separator: ","))) }
     }
 
     /// Stops every service that uses the cache, deletes it, and starts them again with the same command and env.
@@ -731,7 +770,45 @@ final class AppModel {
         return failures
     }
 
+    /// Starts a remembered or declared command. When its port is taken, it does not start blind: if the same command
+    /// already runs it says so, and otherwise it offers to close whatever holds the port first.
     func launch(_ recipe: LaunchRecipe) {
+        let holders = recipe.ports.compactMap { port in snapshot.ports.first { $0.port == port } }
+        guard let holder = holders.first else { start(recipe); return }
+        if let root = holder.serviceRootPid, let found = snapshot.service(rootPid: root),
+           ProjectStart.isRunning(recipe, services: [found.1], boundPorts: []) {
+            show(L("%@ ya está corriendo", recipe.label))
+            return
+        }
+        guard holder.groupKind != .system, holder.container == nil else {
+            show(L("El puerto :%d lo usa %@; DevDeck no lo toca.", Int(holder.port), holder.container ?? holder.processName))
+            return
+        }
+        let title = L("El puerto :%d está ocupado", Int(holder.port))
+        let body = L("Lo usa %@ (%@). ¿Lo cierro y arranco %@?", holder.processName, holder.groupName, recipe.label)
+        presentAlert(title: title, body: body, severity: .warning, actionLabel: L("Liberar y arrancar"), seconds: 30) { [weak self] in
+            Task { await self?.freeAndLaunch(recipe, holders: holders) }
+        }
+    }
+
+    /// Closes what holds the recipe's ports (the whole server it belongs to), waits for them to be free, then starts it.
+    func freeAndLaunch(_ recipe: LaunchRecipe, holders: [PortBinding]) async {
+        for holder in holders {
+            if let root = holder.serviceRootPid, let found = snapshot.service(rootPid: root) {
+                await captureRecipe(service: found.1, group: found.0)
+                await terminateVerified(found.1.pids)
+            } else {
+                await terminateVerified([holder.pid])
+            }
+        }
+        guard await ProcessControl.waitUntilFree(ports: recipe.ports, timeout: 20) else {
+            show(L("El puerto sigue ocupado; no arranco %@ para no chocar.", recipe.label))
+            return
+        }
+        start(recipe)
+    }
+
+    private func start(_ recipe: LaunchRecipe) {
         do {
             let (process, log) = try ProcessControl.launch(recipe, logDirectory: store.logsDirectory, fallbackEnv: loginEnv)
             managedRuns.insert(ManagedRun(recipe: recipe, logURL: log, started: Date(), process: process), at: 0)
@@ -744,7 +821,9 @@ final class AppModel {
 
     func startPlan(root: String) -> ProjectStartPlan {
         let services = snapshot.groups.first { $0.projectRoot == root }?.services ?? []
-        return ProjectStart.plan(root: root, recipes: recipes[root] ?? [], services: services, boundPorts: Set(snapshot.ports.map(\.port)),
+        // What the project declares is the plan; without a manifest, the commands DevDeck remembers are.
+        let declared = projectManifests[root]?.recipes(root: root) ?? []
+        return ProjectStart.plan(root: root, recipes: declared.isEmpty ? recipes[root] ?? [] : declared, services: services, boundPorts: Set(snapshot.ports.map(\.port)),
                                  containers: snapshot.containers, dockerAvailable: dockerPath != nil)
     }
 
@@ -824,10 +903,8 @@ final class AppModel {
     }
 
     func remember(_ recipe: LaunchRecipe) {
-        var list = recipes[recipe.projectRoot] ?? []
-        list.removeAll { $0.id == recipe.id }
-        list.insert(recipe, at: 0)
-        recipes[recipe.projectRoot] = Array(list.prefix(6))
+        let list = LaunchRecipe.cleaned([recipe] + (recipes[recipe.projectRoot] ?? []))
+        recipes[recipe.projectRoot] = Array(list.prefix(8))
         store.save(recipes, "recipes.json")
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: store.directory.appendingPathComponent("recipes.json").path)
     }
@@ -945,7 +1022,8 @@ final class AppModel {
 
     func refreshAgentUsage() async {
         guard !agentScanning else { return }
-        if gameMode && settings.game.lowPower { return }
+        // Low-power game mode skips reading the agents' logs, but limits are still read so accounts keep switching.
+        if gameMode && settings.game.lowPower { await refreshAccounts(); return }
         agentScanning = true
         if agentUsage.installs.isEmpty { agentUsage.installs = await usageScanner.installs(env: loginEnv) }
         agentUsage = await usageScanner.scan(days: 7, env: loginEnv)

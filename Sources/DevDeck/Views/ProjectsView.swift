@@ -119,6 +119,7 @@ struct ProjectDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header(name: name, group: group)
+                ProjectInfraSection(root: root)
                 if let group {
                     stats(group)
                     servicesSection(group)
@@ -129,6 +130,7 @@ struct ProjectDetailView: View {
                     if !group.containers.isEmpty { containersSection(group.containers) }
                 }
                 launchSection(running: group != nil)
+                ProjectWorkSection(root: root)
                 ProjectCachesSection(root: root)
                 logsSection
             }
@@ -150,6 +152,9 @@ struct ProjectDetailView: View {
             HStack {
                 Button { model.reveal(root) } label: { Label("Finder", systemImage: "folder") }
                 Button { model.openTerminal(at: root) } label: { Label("Terminal", systemImage: "terminal") }
+                Button { Task { await model.openAgent(in: root) } } label: { Label("Claude Code", systemImage: "sparkle") }
+                    .help(L("Abre Claude Code en esta carpeta, con la cuenta de este proyecto"))
+                FolderAccountMenu(root: root)
                 if let group, !group.services.isEmpty {
                     KillButton(title: L("¿Detener todo %@?", name), message: L("Se guardan los comandos para volver a arrancarlos."), label: L("Detener todo")) {
                         for s in group.services { await model.stop(service: s, in: group) }
@@ -221,6 +226,11 @@ struct ProjectDetailView: View {
                                 .disabled(model.startingProjects.contains(root))
                                 .help(startAllHelp(plan))
                         }
+                    }
+                    if !saved.isEmpty, model.projectManifests[root] == nil {
+                        Button { model.writeManifest(root: root) } label: { Label(L("Guardar como devdeck.json"), systemImage: "square.and.arrow.down") }
+                            .controlSize(.small)
+                            .help(L("Escribe en el proyecto un devdeck.json con estos comandos y puertos (sin variables de entorno), para levantarlo todo con un botón y compartirlo con el equipo"))
                     }
                     if !saved.isEmpty {
                         Text(L("Comandos recordados (mismo comando, carpeta y entorno con que corrían)")).font(.caption).foregroundStyle(Theme.secondaryText)
@@ -566,5 +576,35 @@ struct ProfileRow: View {
         if !plan.close.isEmpty { lines.append(L("Cierra: %@", names(plan.close))) }
         if plan.closeHeadless { lines.append(L("Cierra los navegadores headless")) }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// Which saved Claude Code account this project's agent work belongs to.
+struct FolderAccountMenu: View {
+    @Environment(AppModel.self) private var model
+    let root: String
+
+    var body: some View {
+        let saved = model.accounts.accounts(of: "Claude Code").filter { $0.vaultID != nil }
+        if !saved.isEmpty {
+            let current = model.folderAccount(for: root)
+            let own = model.settings.folderAccounts[(root as NSString).standardizingPath] != nil
+            Menu {
+                Button { model.setFolderAccount(root, nil) } label: {
+                    Label(L("Sin cuenta fija"), systemImage: own || current != nil ? "circle" : "checkmark")
+                }
+                Divider()
+                ForEach(saved) { account in
+                    Button { model.setFolderAccount(root, account) } label: {
+                        Label(account.alias ?? account.email, systemImage: current?.vaultID == account.vaultID ? "checkmark" : "person")
+                    }
+                }
+            } label: {
+                Label(current.map { $0.alias ?? $0.email } ?? L("Cuenta"), systemImage: "person.crop.circle")
+            }
+            .fixedSize()
+            .help(current == nil ? L("Elige la cuenta de Claude Code para este proyecto")
+                  : own ? L("Claude Code se abre aquí con esta cuenta") : L("Cuenta heredada de una carpeta superior"))
+        }
     }
 }
