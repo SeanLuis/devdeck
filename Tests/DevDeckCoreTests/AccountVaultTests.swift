@@ -199,10 +199,59 @@ struct AccountVaultTests {
         let one = try box.vault.addCurrent()
         let saved = try #require(box.vault.credentials(for: one))
         let refreshed = try #require(ClaudeCredential.applyingRefresh(saved, response: ["access_token": "access-new", "refresh_token": "refresh-new", "expires_in": 28_800]))
-        try box.vault.commitRefresh(refreshed, for: one.id)
+        try box.vault.commitRefresh(refreshed, for: one.id, spent: saved)
         #expect(ClaudeCredential.accessToken(box.vault.liveCredentials()) == "access-new")
         #expect(ClaudeCredential.accessToken(box.vault.credentials(for: one)) == "access-new")
         #expect(!ClaudeCredential.isExpired(refreshed) && ClaudeCredential.isExpired(VaultSandbox.login("x", expiresIn: 100)))
+    }
+
+    @Test func aRenewalReachesClaudeCodeWhenItHoldsTheSameGenerationWhateverItsConfigSays() throws {
+        let box = try VaultSandbox()
+        try box.logIn("one@example.com", org: "o1", credentials: VaultSandbox.login("one", expiresIn: 100))
+        let one = try box.vault.addCurrent()
+        let saved = try #require(box.vault.credentials(for: one))
+        // Claude Code is rewriting its config: who is logged in cannot be read, but its keychain holds this login.
+        try "{\"numStartups\": 4".write(toFile: box.home + "/.claude.json", atomically: true, encoding: .utf8)
+        #expect(box.vault.liveIdentity() == nil)
+        #expect(ClaudeCredential.sameGeneration(saved, box.vault.liveCredentials()))
+        let renewed = try #require(ClaudeCredential.applyingRefresh(saved, response: ["access_token": "access-new", "refresh_token": "refresh-new", "expires_in": 28_800]))
+        try box.vault.commitRefresh(renewed, for: one.id, spent: saved)
+        #expect(ClaudeCredential.accessToken(box.vault.liveCredentials()) == "access-new")
+    }
+
+    @Test func aRenewalLeavesAnotherLoginInUseAlone() throws {
+        let box = try VaultSandbox()
+        try box.logIn("one@example.com", org: "o1", credentials: VaultSandbox.login("one", expiresIn: 100))
+        let one = try box.vault.addCurrent()
+        let saved = try #require(box.vault.credentials(for: one))
+        try box.logIn("two@example.com", org: "o2", credentials: VaultSandbox.login("two"))
+        _ = try box.vault.addCurrent()
+        #expect(!ClaudeCredential.sameGeneration(saved, box.vault.liveCredentials()))
+        let renewed = try #require(ClaudeCredential.applyingRefresh(saved, response: ["access_token": "access-new", "refresh_token": "refresh-new", "expires_in": 28_800]))
+        try box.vault.commitRefresh(renewed, for: one.id, spent: saved)
+        #expect(ClaudeCredential.accessToken(box.vault.liveCredentials()) == "access-two")
+        #expect(ClaudeCredential.accessToken(box.vault.credentials(for: one)) == "access-new")
+    }
+
+    @Test func onlyAnExplicitInvalidGrantKillsALogin() {
+        func body(_ error: String) -> Data { Data("{\"error\": \"\(error)\"}".utf8) }
+        #expect(ClaudeOAuth.refreshFailure(status: 400, body: body("invalid_grant")) == .unauthorized)
+        #expect(ClaudeOAuth.refreshFailure(status: 400, body: body("invalid_request")) == .network)
+        #expect(ClaudeOAuth.refreshFailure(status: 401, body: Data("<html>".utf8)) == .network)
+        #expect(ClaudeOAuth.refreshFailure(status: 429, body: Data()) == .rateLimited)
+        #expect(ClaudeOAuth.refreshFailure(status: 503, body: body("invalid_grant")) == .network)
+    }
+
+    @Test func freshenLeavesAFreshLoginAsItIsAndNeverTouchesTheOneInUse() async throws {
+        let box = try VaultSandbox()
+        try box.logIn("one@example.com", org: "o1", credentials: VaultSandbox.login("one", expiresIn: 3600))
+        let one = try box.vault.addCurrent()
+        let service = AccountUsageService(directory: nil)
+        #expect(await service.freshen(one, vault: box.vault) == .inUse)
+        try box.logIn("two@example.com", org: "o2", credentials: VaultSandbox.login("two"))
+        _ = try box.vault.addCurrent()
+        let saved = try #require(box.vault.credentials(for: one))
+        #expect(await service.freshen(one, vault: box.vault) == .renewed(saved))
     }
 
     @Test func renamesReordersAndRemoves() throws {

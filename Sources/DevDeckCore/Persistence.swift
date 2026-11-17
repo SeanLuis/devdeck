@@ -81,6 +81,39 @@ public struct AIConfig: Codable, Hashable, Sendable {
     }
 }
 
+/// What the menu bar shows: the text beside its icon and the sections of the panel it opens. Each person keeps what
+/// is useful to them.
+public struct MenuBarConfig: Codable, Hashable, Sendable {
+    /// Memory in use beside the icon.
+    public var labelMemory = true
+    /// How far the agent account in use has gone, beside the icon.
+    public var labelAccount = true
+    /// RAM, CPU, swap and disk.
+    public var system = true
+    /// A warning about memory or swap, when there is one.
+    public var insight = true
+    /// The agent account in use, with a selector to change it.
+    public var account = true
+    /// What uses the most memory.
+    public var consumers = true
+    /// Dev servers and their ports.
+    public var servers = true
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MenuBarConfig()
+        labelMemory = try c.decodeIfPresent(Bool.self, forKey: .labelMemory) ?? d.labelMemory
+        labelAccount = try c.decodeIfPresent(Bool.self, forKey: .labelAccount) ?? d.labelAccount
+        system = try c.decodeIfPresent(Bool.self, forKey: .system) ?? d.system
+        insight = try c.decodeIfPresent(Bool.self, forKey: .insight) ?? d.insight
+        account = try c.decodeIfPresent(Bool.self, forKey: .account) ?? d.account
+        consumers = try c.decodeIfPresent(Bool.self, forKey: .consumers) ?? d.consumers
+        servers = try c.decodeIfPresent(Bool.self, forKey: .servers) ?? d.servers
+    }
+}
+
 public struct AppSettings: Codable, Hashable, Sendable {
     public var sampleInterval: Double = 2
     public var historyMinutes: Double = 30
@@ -94,6 +127,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var agentRequests = true
     /// "Tell me when it resets": account window ("<account id>|<window>") → when it resets (seconds since 1970).
     public var resetNotices: [String: Double] = [:]
+    public var menuBar = MenuBarConfig()
+    /// Closing DevDeck (its window or ⌘Q) leaves it in the menu bar; only "Quit" in the menu bar panel ends it.
+    public var keepInMenuBar = true
     /// Suggest another saved account when the one in use is about to hit its limit (it only suggests).
     public var suggestAccountSwitch = true
     public var accountSwitchPercent: Double = 90
@@ -140,6 +176,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         claudeHooks = try c.decodeIfPresent(Bool.self, forKey: .claudeHooks) ?? false
         agentRequests = try c.decodeIfPresent(Bool.self, forKey: .agentRequests) ?? true
         resetNotices = try c.decodeIfPresent([String: Double].self, forKey: .resetNotices) ?? [:]
+        menuBar = try c.decodeIfPresent(MenuBarConfig.self, forKey: .menuBar) ?? MenuBarConfig()
+        keepInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .keepInMenuBar) ?? true
         suggestAccountSwitch = try c.decodeIfPresent(Bool.self, forKey: .suggestAccountSwitch) ?? d.suggestAccountSwitch
         accountSwitchPercent = try c.decodeIfPresent(Double.self, forKey: .accountSwitchPercent) ?? d.accountSwitchPercent
         accountSwitchMode = try c.decodeIfPresent(String.self, forKey: .accountSwitchMode) ?? (suggestAccountSwitch ? "auto" : "off")

@@ -207,6 +207,7 @@ public struct DemoData: Sendable {
         accounts.switcherPath = "/usr/local/bin/cswap"
         func account(_ number: Int, _ email: String, _ organization: String, active: Bool, plan: String?, _ windows: [(String, Double, Double, Bool?)]) -> AgentAccount {
             var a = AgentAccount(agent: "Claude Code", number: number, email: email, organization: organization, plan: plan, active: active)
+            a.vaultID = "demo-\(number)"
             a.windows = windows.map { UsageWindow(name: $0.0, percent: $0.1, resetsAt: now.addingTimeInterval($0.2 * 3600), willLast: $0.3) }
             return a
         }

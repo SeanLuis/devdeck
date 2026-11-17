@@ -60,7 +60,7 @@ extension AppModel {
             task.executableURL = URL(fileURLWithPath: "/bin/sh")
             task.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", path]
             try? task.run()
-            NSApp.terminate(nil)
+            AppPresence.quit()
         } catch {
             updateInstalling = false
             updateError = error.localizedDescription

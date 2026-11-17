@@ -9,7 +9,12 @@ struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
     @State private var showAdvanced = false
-    @State private var pane = SettingsPane(rawValue: UserDefaults.standard.string(forKey: "settingsPane") ?? "") ?? .general
+    /// Remembered, and changed from outside too ("Customize this panel…" in the menu bar opens its section).
+    @AppStorage("settingsPane") private var paneName = SettingsPane.general.rawValue
+    private var pane: SettingsPane {
+        get { SettingsPane(rawValue: paneName) ?? .general }
+        nonmutating set { paneName = newValue.rawValue }
+    }
 
     var body: some View {
         @Bindable var model = model
@@ -169,6 +174,28 @@ struct SettingsView: View {
                     if showAdvanced {
                         row(L("Endpoint compatible"), L("API Responses de OpenAI o un gateway compatible")) {
                             TextField("https://api.openai.com/v1", text: $model.settings.ai.baseURL).textFieldStyle(.roundedBorder).frame(width: 320)
+                        }
+                    }
+                }
+                case .menuBar:
+                Panel(L("Barra de menú"), symbol: "menubar.rectangle") {
+                    row(L("Seguir en la barra de menú al cerrar"),
+                        L("Cerrar la ventana o pulsar ⌘Q deja DevDeck arriba, sin icono en el Dock. Para salir del todo: “Salir de DevDeck” en su panel.")) {
+                        Toggle("", isOn: $model.settings.keepInMenuBar).labelsHidden().toggleStyle(.switch)
+                    }
+                    row(L("Junto al icono"), L("Lo que se lee sin abrir nada")) {
+                        HStack(spacing: 14) {
+                            Toggle(L("Memoria"), isOn: $model.settings.menuBar.labelMemory)
+                            Toggle(L("Cuenta del agente"), isOn: $model.settings.menuBar.labelAccount)
+                        }
+                    }
+                    row(L("En el panel"), L("Las secciones que aparecen al hacer clic en el icono")) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(L("RAM, CPU, swap y disco"), isOn: $model.settings.menuBar.system)
+                            Toggle(L("Avisos de memoria y swap"), isOn: $model.settings.menuBar.insight)
+                            Toggle(L("Cuenta del agente y cambio de cuenta"), isOn: $model.settings.menuBar.account)
+                            Toggle(L("Qué consume más"), isOn: $model.settings.menuBar.consumers)
+                            Toggle(L("Servidores de desarrollo"), isOn: $model.settings.menuBar.servers)
                         }
                     }
                 }
@@ -502,7 +529,7 @@ struct OwnUsagePanel: View {
 
 /// Sections of Settings.
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, ai, island, game, notifications, monitoring, projects, updates, about
+    case general, ai, menuBar, island, game, notifications, monitoring, projects, updates, about
 
     var id: String { rawValue }
 
@@ -510,6 +537,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return L("General")
         case .ai: return L("Inteligencia artificial")
+        case .menuBar: return L("Barra de menú")
         case .island: return L("Isla y lanzador")
         case .game: return L("Modo juego")
         case .notifications: return L("Notificaciones")
@@ -524,6 +552,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return L("Idioma, tema e iconos")
         case .ai: return L("Motor, modelos, piloto automático y lo que gasta DevDeck")
+        case .menuBar: return L("Qué se ve junto al icono y en su panel, y qué pasa al cerrar DevDeck")
         case .island: return L("La píldora de arriba, sus tableros y el atajo global")
         case .game: return L("Cuándo se activa y qué pausa mientras juegas")
         case .notifications: return L("Avisos del sistema y de DevDeck")
@@ -538,6 +567,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .ai: return "sparkles"
+        case .menuBar: return "menubar.rectangle"
         case .island: return "rectangle.topthird.inset.filled"
         case .game: return "gamecontroller"
         case .notifications: return "bell"

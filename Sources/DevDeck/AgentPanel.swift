@@ -400,6 +400,20 @@ extension AppModel {
         defer { switchingAccount = nil }
         if let id = account.vaultID, let vault {
             let codex = account.agent == AccountVault.codex
+            // The incoming login gets a token that outlives Claude Code's own renewal margin first; otherwise a
+            // session that is running renews the previous account over it, and that account's login is lost.
+            if !codex, let stored = vault.accounts().first(where: { $0.id == id }) {
+                switch await accountUsage.freshen(stored, vault: vault) {
+                case .dead:
+                    show(L("La sesión de %@ caducó: vuelve a iniciar sesión en esa cuenta", account.email))
+                    await refreshAccounts()
+                    return false
+                case .unavailable:
+                    show(L("No se pudo renovar la sesión de %@; se reintenta en un momento", account.email))
+                    return false
+                case .renewed, .inUse: break
+                }
+            }
             let failure: String? = await Task.detached(priority: .userInitiated) {
                 do {
                     if codex { try vault.switchCodex(to: id) } else { try vault.switchClaude(to: id) }

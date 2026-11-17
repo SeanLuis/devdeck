@@ -74,6 +74,15 @@ public enum ClaudeCredential {
 
     public static func accessToken(_ json: String?) -> String? { oauth(json)?["accessToken"] as? String }
 
+    static func refreshToken(_ json: String?) -> String? { oauth(json)?["refreshToken"] as? String }
+
+    /// Two copies of the same login generation: they hold the same refresh token. Only one holder may ever renew
+    /// it, because a renewal spends that token for every other copy.
+    public static func sameGeneration(_ a: String?, _ b: String?) -> Bool {
+        guard let token = refreshToken(a), !token.isEmpty else { return false }
+        return token == refreshToken(b)
+    }
+
     /// When the access token stops working.
     public static func expiresAt(_ json: String?) -> Date? {
         (oauth(json)?["expiresAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
@@ -522,16 +531,17 @@ public final class AccountVault: @unchecked Sendable {
         try? updated.write(to: url, options: .atomic)
     }
 
-    /// Records a refreshed login. If that account became the one in use meanwhile, the login in use is updated
-    /// too: a refresh spends the old refresh token, and Claude Code must not be left holding it.
-    public func commitRefresh(_ credentials: String, for id: String) throws {
+    /// Records a renewed login. `spent` is the copy that was renewed: if Claude Code holds that same generation
+    /// (the account became the one in use meanwhile, or its config could not be read), the login in use is
+    /// updated too, or Claude Code would be left with a spent refresh token and ask to log in again.
+    public func commitRefresh(_ credentials: String, for id: String, spent: String? = nil) throws {
         lock.lock(); defer { lock.unlock() }
         guard let account = accounts().first(where: { $0.id == id }) else { return }
         try store(credentials, for: account)
-        guard let live = liveIdentity(), account.matches(email: live.email, organization: live.organizationUuid) else { return }
+        guard let spent, ClaudeCredential.sameGeneration(liveCredentials(), spent) else { return }
         try ClaudeLocks.with(ClaudeLocks.credentialLocks(home: home)) {
             let current = liveCredentials()
-            guard ClaudeCredential.fresher(current, credentials) == credentials else { return }
+            guard ClaudeCredential.sameGeneration(current, spent) else { return }
             try keychain.set(service: Self.claudeService, account: user, secret: ClaudeCredential.mergingShared(target: credentials, live: current))
         }
     }

@@ -19,9 +19,11 @@ struct MenuBarLabel: View {
 
 extension MenuBarLabel {
     func title(_ s: SystemSample) -> String {
-        let memory = model.hasSample ? "\(Int(s.memPercent))%" : "—"
-        guard let account = model.menuBarAccountTitle else { return memory }
-        return memory + "  " + account
+        let config = model.settings.menuBar
+        var parts: [String] = []
+        if config.labelMemory { parts.append(model.hasSample ? "\(Int(s.memPercent))%" : "—") }
+        if config.labelAccount, let account = model.menuBarAccountTitle { parts.append(account) }
+        return parts.joined(separator: "  ")
     }
 }
 
@@ -33,7 +35,9 @@ struct MenuBarView: View {
     var body: some View {
         let s = model.system
         VStack(alignment: .leading, spacing: 14) {
+            let config = model.settings.menuBar
             header(s)
+            if config.system {
             HStack(spacing: 0) {
                 ring("RAM", s.memPercent / 100, "\(Int(s.memPercent))%", "\(String(format: "%.1f", Fmt.gb(s.memUsed))) GB",
                      [Theme.link, Theme.tint, Theme.tint])
@@ -46,8 +50,9 @@ struct MenuBarView: View {
             }
             .padding(.vertical, 12)
             .glass(cornerRadius: 16)
+            }
 
-            if let insight = model.swapReport.insights.first(where: { $0.severity != .info }) {
+            if config.insight, let insight = model.swapReport.insights.first(where: { $0.severity != .info }) {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: insight.symbol).foregroundStyle(Color.severity(insight.severity))
                     VStack(alignment: .leading, spacing: 2) {
@@ -61,8 +66,9 @@ struct MenuBarView: View {
                 .onTapGesture { open(.memory) }
             }
 
-            MenuBarAccounts()
+            if config.account { MenuBarAccounts() }
 
+            if config.consumers {
             section(L("Qué consume más"))
             VStack(spacing: 8) {
                 let total = Double(max(s.memTotal, 1))
@@ -89,8 +95,10 @@ struct MenuBarView: View {
                 }
             }
 
+            }
+
             let ports = Array(Set(model.devPorts.map(\.port))).sorted()
-            if !ports.isEmpty {
+            if config.servers, !ports.isEmpty {
                 section(L("Servidores de desarrollo"))
                 VStack(spacing: 6) {
                     ForEach(ports.prefix(4), id: \.self) { port in
@@ -131,8 +139,12 @@ struct MenuBarView: View {
                     Divider()
                     Button(L("Memoria y swap")) { open(.memory) }
                     Button(L("Ajustes")) { open(.settings) }
+                    Button(L("Personalizar este panel…")) {
+                        UserDefaults.standard.set(SettingsPane.menuBar.rawValue, forKey: "settingsPane")
+                        open(.settings)
+                    }
                     Divider()
-                    Button(L("Salir de DevDeck")) { NSApp.terminate(nil) }
+                    Button(L("Salir de DevDeck")) { AppPresence.quit() }
                 } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
@@ -190,83 +202,96 @@ struct MenuBarView: View {
 
     private func open(_ section: SidebarSection) {
         model.selectedSection = section
+        AppPresence.showApp()
         openWindow(id: "main")
-        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
-/// The Claude Code accounts in the top-bar popover: the one in use with its limits, and the rest one click away.
+/// The agent accounts in use, one card per agent, with a selector to change to another saved account.
 struct MenuBarAccounts: View {
     @Environment(AppModel.self) private var model
-    @State private var asking: String?
 
     var body: some View {
-        let accounts = model.accounts.accounts(of: "Claude Code")
-        if accounts.contains(where: { !$0.windows.isEmpty || ($0.active && $0.note != nil) }) {
+        let agents = ["Claude Code", "Codex"].filter { agent in model.accounts.accounts(of: agent).contains(where: \.active) }
+        if !agents.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Text(L("Cuenta del agente").uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.tertiaryText)
                     Spacer()
-                    if let read = accounts.first(where: \.active)?.usageFetched {
+                    if let read = model.activeClaudeAccount?.usageFetched {
                         Text(L("leído %@", relative(read))).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
                     }
                     Button { Task { await model.refreshAccounts(force: true) } } label: { Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .semibold)) }
                         .buttonStyle(.plain).foregroundStyle(Theme.secondaryText).help(L("Actualizar"))
                 }
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(accounts) { account in
-                        row(account)
-                        if account.active, let detail = resets(account) {
-                            Text(detail).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText).lineLimit(1).padding(.leading, 14)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(agents, id: \.self) { agent in card(agent) }
                 }
-                .padding(10)
+                .padding(12)
                 .glass(cornerRadius: 12)
             }
         }
     }
 
-    @ViewBuilder private func row(_ account: AgentAccount) -> some View {
-        let short = account.windows.first { $0.name == "5 h" }
-        let week = account.windows.first { $0.name == "7 días" }
-        HStack(spacing: 8) {
-            Circle().fill(account.active ? Theme.success : Theme.ink(0.18)).frame(width: 6, height: 6)
-            Text(account.alias ?? account.email).font(.system(size: 12, weight: account.active ? .semibold : .regular)).lineLimit(1).truncationMode(.middle)
-            Spacer(minLength: 6)
-            if asking == account.id {
-                Button(L("Cambiar")) { asking = nil; Task { await model.switchClaudeAccount(account) } }.buttonStyle(.borderedProminent).controlSize(.small)
-                Button(L("No")) { asking = nil }.buttonStyle(.bordered).controlSize(.small)
-            } else {
-                if let short { figure("5 h", short.percent) }
-                if let week { figure(L("7 días"), week.percent) }
-                if model.switchingAccount == account.id {
-                    ProgressView().controlSize(.small).frame(width: 44)
-                } else if !account.active, account.number != nil, account.vaultID != nil || model.accounts.switcherPath != nil {
-                    Button(L("Usar")) { asking = account.id }.buttonStyle(.bordered).controlSize(.small).frame(width: 44)
-                        .disabled(model.switchingAccount != nil)
-                } else {
-                    Color.clear.frame(width: 44, height: 1)
+    @ViewBuilder private func card(_ agent: String) -> some View {
+        let all = model.accounts.accounts(of: agent)
+        if let active = all.first(where: \.active) {
+            // Accounts DevDeck can switch to: its own saved ones, or the ones claude-swap manages.
+            let others = all.filter { !$0.active && ($0.vaultID != nil || ($0.number != nil && model.accounts.switcherPath != nil)) }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    AgentIcon(name: agent, size: 18)
+                    Text(active.alias ?? active.email).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    if model.switchingAccount != nil {
+                        ProgressView().controlSize(.small)
+                    } else if !others.isEmpty {
+                        Menu {
+                            ForEach(others) { account in
+                                Button { Task { await model.switchClaudeAccount(account) } } label: {
+                                    Text((account.alias ?? account.email) + "  ·  " + room(account))
+                                }
+                            }
+                        } label: {
+                            Text(L("Cambiar")).font(.system(size: 11, weight: .medium))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help(L("Cambiar %@ a otra cuenta guardada", agent))
+                    }
+                }
+                ForEach(["5 h", "7 días"], id: \.self) { name in
+                    if let window = active.windows.first(where: { $0.name == name }) { bar(window) }
+                }
+                if active.windows.isEmpty, let note = active.note {
+                    Text(L(note)).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
                 }
             }
         }
     }
 
-    /// "5 h reinicia en 3 h · 7 días reinicia en 5 d" for the account in use.
-    private func resets(_ account: AgentAccount) -> String? {
-        let parts = ["5 h", "7 días"].compactMap { name -> String? in
-            guard let resets = account.windows.first(where: { $0.name == name })?.resetsAt, resets > Date() else { return nil }
-            return L(name) + " " + L("reinicia %@", relative(resets))
+    /// "5 h 12% · 7 días 40%" for an account in the selector.
+    private func room(_ account: AgentAccount) -> String {
+        let parts = ["5 h", "7 días"].compactMap { name in
+            account.percentNow(name).map { L(name) + " " + "\(Int($0.rounded()))%" }
         }
-        if parts.isEmpty { return account.note.map { L($0) } }
-        return parts.joined(separator: " · ")
+        return parts.isEmpty ? L("sin lectura") : parts.joined(separator: " · ")
     }
 
-    private func figure(_ name: String, _ percent: Double) -> some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text("\(Int(percent.rounded()))%").font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.level(percent / 100) == Theme.tint ? Color.primary : Theme.level(percent / 100))
-            Text(name).font(.system(size: 8, weight: .medium)).foregroundStyle(Theme.tertiaryText)
+    private func bar(_ window: UsageWindow) -> some View {
+        let expired = (window.resetsAt ?? .distantFuture) <= Date()
+        let percent = expired ? 0 : window.percent
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(L(window.name)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.tertiaryText)
+                Spacer()
+                if let resets = window.resetsAt, !expired {
+                    Text(L("reinicia %@", relative(resets))).font(.system(size: 10)).foregroundStyle(Theme.tertiaryText)
+                }
+                Text(expired ? "—" : "\(Int(percent.rounded()))%").font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.level(percent / 100) == Theme.tint ? Color.primary : Theme.level(percent / 100))
+            }
+            UsageBar(fraction: percent / 100, tint: Theme.level(percent / 100))
         }
-        .frame(width: 34, alignment: .trailing)
     }
 }

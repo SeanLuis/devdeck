@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10
+
+- The menu bar panel shows the agent account in use with its 5-hour and 7-day windows, and a selector to change to another saved account
+- Settings → Menu bar: choose what shows beside the icon (memory, agent account) and which sections the panel has
+- Closing DevDeck's window or pressing ⌘Q leaves it in the menu bar without a Dock icon; "Quit DevDeck" in the panel ends it. Can be turned off
+- Saved Claude Code logins no longer expire after switching: DevDeck never renews the login Claude Code holds (even while its config is being rewritten), renews the incoming account before switching so a running session cannot overwrite it, and treats a login as expired only when Anthropic says so
+
 ## 0.1.9
 
 - Gradle and Maven projects: `./gradlew bootRun` is shown and remembered as typed, with the port its app opens; Gradle's shared daemon is no longer taken for a project's server

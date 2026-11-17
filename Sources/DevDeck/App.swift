@@ -91,6 +91,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// ⌘Q or "Quit" from the Dock closes the window and leaves DevDeck in the menu bar, when the user wants that.
+    /// "Quit DevDeck" in the menu bar panel, an update, and logging out or shutting down still end it.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            guard let model = PaletteController.shared.model, model.settings.keepInMenuBar, !AppPresence.quitting,
+                  AppPresence.personIsClosing else { return .terminateNow }
+            AppPresence.hideToMenuBar()
+            return .terminateCancel
+        }
+    }
+}
+
+/// Whether DevDeck shows as a regular app (window and Dock icon) or lives only in the menu bar.
+@MainActor
+enum AppPresence {
+    /// Set by the actions that really mean to end DevDeck.
+    static var quitting = false
+
+    static func quit() {
+        quitting = true
+        NSApp.terminate(nil)
+    }
+
+    /// The person closing DevDeck: ⌘Q or the app menu (no Apple event), or "Quit" on its Dock icon. A quit from the
+    /// system (logout, restart, shutdown), from a script or from another app is obeyed at once.
+    static var personIsClosing: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent else { return true }
+        guard event.eventID == kAEQuitApplication else { return false }
+        let reason = event.attributeDescriptor(forKeyword: kAEQuitReason) ?? event.paramDescriptor(forKeyword: kAEQuitReason)
+        if (reason?.enumCodeValue ?? 0) != 0 { return false }
+        guard let sender = event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value else { return false }
+        return NSRunningApplication(processIdentifier: sender)?.bundleIdentifier == "com.apple.dock"
+    }
+
+    static var mainWindows: [NSWindow] { NSApp.windows.filter { $0.identifier?.rawValue == "main" || $0.title == "DevDeck" } }
+
+    static func hideToMenuBar() {
+        for window in mainWindows { window.close() }
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// Before the window opens: the Dock icon comes back with it.
+    static func showApp() {
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        NSApp.activate(ignoringOtherApps: true)
+    }
 }
 
 struct DevDeckApp: App {
@@ -103,7 +150,7 @@ struct DevDeckApp: App {
         PaletteController.shared.model = model
         Notifier.shared.onOpen = { section in
             model.selectedSection = section
-            NSApp.activate(ignoringOtherApps: true)
+            AppPresence.showApp()
             NSApp.windows.first { $0.identifier?.rawValue == "main" || $0.title == "DevDeck" }?.makeKeyAndOrderFront(nil)
         }
         _model = State(initialValue: model)
@@ -114,6 +161,9 @@ struct DevDeckApp: App {
             RootView()
                 .environment(model)
                 .frame(minWidth: 1120, minHeight: 720)
+                .onAppear { AppPresence.showApp() }
+                // Closing the window leaves DevDeck in the menu bar without a Dock icon.
+                .onDisappear { if model.settings.keepInMenuBar { NSApp.setActivationPolicy(.accessory) } }
                 .appAppearance(model.settings.appearance)
                 .appLanguage(model.settings.language)
         }

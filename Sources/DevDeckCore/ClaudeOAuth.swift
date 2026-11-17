@@ -97,20 +97,30 @@ public enum ClaudeOAuth {
     }
 
     /// Renews the access token of a saved login. Returns the whole credential, ready to store.
+    /// Only an explicit `invalid_grant` means the login is dead; any other refusal is treated as momentary.
     public static func refresh(credentials: String) async -> Result<String, Failure> {
-        guard let refreshToken = ClaudeCredential.oauth(credentials)?["refreshToken"] as? String, !refreshToken.isEmpty else { return .failure(.unauthorized) }
+        guard let refreshToken = ClaudeCredential.refreshToken(credentials), !refreshToken.isEmpty else { return .failure(.unauthorized) }
         var request = URLRequest(url: tokenURL, timeoutInterval: 12)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["grant_type": "refresh_token", "refresh_token": refreshToken, "client_id": clientID])
-        switch await send(request) {
-        case .failure(let failure): return .failure(failure)
-        case .success(let data):
-            guard let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let updated = ClaudeCredential.applyingRefresh(credentials, response: response) else { return .failure(.network) }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else { return .failure(refreshFailure(status: status, body: data)) }
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let updated = ClaudeCredential.applyingRefresh(credentials, response: object) else { return .failure(.network) }
             return .success(updated)
+        } catch {
+            return .failure(.network)
         }
+    }
+
+    static func refreshFailure(status: Int, body: Data) -> Failure {
+        if status == 429 { return .rateLimited }
+        let error = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
+        return (400..<500).contains(status) && error == "invalid_grant" ? .unauthorized : .network
     }
 }
 
@@ -130,6 +140,67 @@ public actor AccountUsageService {
     public var maxBackoff: TimeInterval = 1800
     /// Extra wait per account after a "too many requests" answer; doubles each time, cleared by a good read.
     private var backoff: [String: TimeInterval] = [:]
+    /// Renewals on the network. A second caller waits for the first: two renewals of one refresh token
+    /// would leave one of them holding a spent token.
+    private var renewing: [String: Task<Renewal, Never>] = [:]
+
+    public enum Renewal: Equatable, Sendable {
+        case renewed(String)
+        /// Claude Code holds this same login generation: it renews it, never DevDeck.
+        case inUse
+        /// The login was refused for good: it needs a new sign-in.
+        case dead
+        /// No answer this time (network, rate limit); nothing changed.
+        case unavailable
+    }
+
+    static let deadNote = "sesión caducada: vuelve a iniciar sesión"
+
+    /// Renews a saved login, once at a time per account, and stores the result before returning.
+    public func renew(_ account: StoredAccount, vault: AccountVault) async -> Renewal {
+        if let running = renewing[account.id] { return await running.value }
+        let saved = unsaved[account.id] ?? vault.credentials(for: account)
+        let task = Task<Renewal, Never> {
+            guard let saved, ClaudeCredential.isLogin(saved) else { return .dead }
+            // Checked right before spending the token: the account may have become the one in use meanwhile.
+            if ClaudeCredential.sameGeneration(saved, vault.liveCredentials()) { return .inUse }
+            switch await ClaudeOAuth.refresh(credentials: saved) {
+            case .success(let renewed):
+                for attempt in 0..<3 {
+                    if attempt > 0 { try? await Task.sleep(nanoseconds: 700_000_000) }
+                    if (try? vault.commitRefresh(renewed, for: account.id, spent: saved)) != nil { return .renewed(renewed) }
+                }
+                return .renewed(renewed)
+            case .failure(.unauthorized):
+                // Another holder may have renewed it a moment ago (that spends the token we held): look again.
+                if let again = vault.credentials(for: account), again != saved, ClaudeCredential.isLogin(again) {
+                    return ClaudeCredential.isExpired(again) ? .unavailable : .renewed(again)
+                }
+                return .dead
+            case .failure: return .unavailable
+            }
+        }
+        renewing[account.id] = task
+        let result = await task.value
+        renewing[account.id] = nil
+        if case .renewed(let renewed) = result { unsaved[account.id] = renewed == vault.credentials(for: account) ? nil : renewed }
+        if result == .dead {
+            var entry = cache[account.id] ?? AccountUsage()
+            entry.note = Self.deadNote
+            cache[account.id] = entry
+            persist()
+        }
+        return result
+    }
+
+    /// Before an account is put in use: its token must outlive Claude Code's own five-minute renewal margin,
+    /// so a session that is running reads the new login instead of renewing the previous one over it.
+    public func freshen(_ account: StoredAccount, vault: AccountVault, now: Date = Date()) async -> Renewal {
+        guard let saved = unsaved[account.id] ?? vault.credentials(for: account), ClaudeCredential.isLogin(saved) else { return .dead }
+        if ClaudeCredential.sameGeneration(saved, vault.liveCredentials()) { return .inUse }
+        guard ClaudeCredential.isExpired(saved, now: now, margin: 600) else { return .renewed(saved) }
+        return await renew(account, vault: vault)
+    }
 
     /// Whether an account's reading should be asked again now.
     static func isDue(last: Date?, entry: AccountUsage?, active: Bool, busy: Bool, backoff: TimeInterval?,
@@ -170,36 +241,28 @@ public actor AccountUsageService {
         let unsavedLive = vault.activeAccount() == nil ? vault.liveIdentity().map { Self.liveKey($0.email) } : nil
         cache = cache.filter { entry in entry.key == unsavedLive || accounts.contains { $0.id == entry.key } }
         for (id, renewed) in unsaved where (try? vault.commitRefresh(renewed, for: id)) != nil { unsaved[id] = nil }
+        let identityKnown = vault.liveIdentity() != nil
         for account in accounts {
             // Asked again for every account: the user may switch while the previous one was on the network.
-            let isActive = account.id == vault.activeAccount()?.id
+            let live = vault.liveCredentials()
+            var credentials = unsaved[account.id] ?? vault.credentials(for: account)
+            // In use when Claude Code says so, or when it holds this same login generation (its config may be
+            // in the middle of a write and unreadable for a moment).
+            let isActive = account.id == vault.activeAccount()?.id || ClaudeCredential.sameGeneration(credentials, live)
             if !force, !Self.isDue(last: lastAttempt[account.id], entry: cache[account.id], active: isActive, busy: busy,
                                    backoff: backoff[account.id], interval: interval, activeInterval: activeInterval, now: now) { continue }
             lastAttempt[account.id] = now
             var entry = cache[account.id] ?? AccountUsage()
             // The login in use belongs to Claude Code: read it, never renew it from here.
-            var credentials = isActive ? vault.liveCredentials() : (unsaved[account.id] ?? vault.credentials(for: account))
+            if isActive { credentials = live }
             if !isActive, let saved = credentials, ClaudeCredential.isExpired(saved) {
-                switch await ClaudeOAuth.refresh(credentials: saved) {
-                case .success(let renewed):
-                    var stored = false
-                    for attempt in 0..<3 where !stored {
-                        if attempt > 0 { try? await Task.sleep(nanoseconds: 700_000_000) }
-                        stored = (try? vault.commitRefresh(renewed, for: account.id)) != nil
-                    }
-                    if !stored { unsaved[account.id] = renewed }
-                    credentials = renewed
-                case .failure(.unauthorized):
-                    // Another tool may have renewed this login a moment ago (that spends the refresh token we held):
-                    // look again before calling the login dead.
-                    if let again = vault.credentials(for: account), again != saved, !ClaudeCredential.isExpired(again) {
-                        credentials = again
-                    } else {
-                        entry.note = "sesión caducada: vuelve a iniciar sesión"
-                        cache[account.id] = entry
-                        continue
-                    }
-                case .failure:
+                // Without knowing who is logged in, a renewal could spend the login Claude Code is using.
+                guard identityKnown || live == nil else { continue }
+                switch await renew(account, vault: vault) {
+                case .renewed(let renewed): credentials = renewed
+                case .inUse: credentials = vault.liveCredentials()
+                case .dead: continue
+                case .unavailable:
                     entry.note = "sin conexión"
                     cache[account.id] = entry
                     continue
@@ -221,7 +284,7 @@ public actor AccountUsageService {
                 entry.fetchedAt = now
                 entry.note = nil
                 backoff[account.id] = nil
-            case .failure(.unauthorized): entry.note = isActive ? "se actualizará cuando uses Claude Code" : "sesión caducada: vuelve a iniciar sesión"
+            case .failure(.unauthorized): entry.note = isActive ? "se actualizará cuando uses Claude Code" : Self.deadNote
             case .failure(.rateLimited):
                 entry.note = "límite de consultas; se reintenta luego"
                 backoff[account.id] = min((backoff[account.id] ?? interval) * 2, maxBackoff)
