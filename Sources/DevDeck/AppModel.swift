@@ -204,6 +204,8 @@ final class AppModel {
     var showUpdate = false
     var updateChecking = false
     var updateInstalling = false
+    /// What the update is doing now ("Descargando…"), shown next to the spinner.
+    var updateStage: String?
     var updateError: String?
     var lastUpdateCheck: Date?
     /// Changes whenever something asks the launcher (floating or embedded) to show the conversation.
@@ -312,6 +314,7 @@ final class AppModel {
                 ClaudeHooks.trim(directory: self.store.directory)
                 self.hookOffset = ClaudeHooks.read(directory: self.store.directory, from: 0).offset
                 self.repairClaudeHooks()
+                self.repairClaudeStatusRelay()
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     if self.settings.claudeHooks { await self.readHookEvents() }

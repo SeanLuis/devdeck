@@ -484,3 +484,103 @@ struct JavaLaunchTests {
         #expect(snapshot.ports.first { $0.port == 5500 }?.serviceRootPid == 10)
     }
 }
+
+@Suite struct StatusLineRelayTests {
+    func sandbox() throws -> (home: String, data: URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-status-\(UUID().uuidString)")
+        let home = root.appendingPathComponent("home").path
+        try FileManager.default.createDirectory(atPath: home + "/.claude", withIntermediateDirectories: true)
+        return (home, root.appendingPathComponent("data"))
+    }
+
+    @Test func readsTheLimitsClaudeCodeHandsItsStatusLine() throws {
+        let input = Data(#"{"model":{"id":"x"},"rate_limits":{"five_hour":{"used_percentage":91.5,"resets_at":1795000000},"seven_day":{"used_percentage":40,"resets_at":"2026-11-20T10:00:00Z"}}}"#.utf8)
+        let limits = try #require(ClaudeStatusLine.parse(input, email: "a@b.c"))
+        #expect(limits.fiveHour?.percent == 91.5)
+        #expect(limits.fiveHour?.resetsAt == Date(timeIntervalSince1970: 1_795_000_000))
+        #expect(limits.sevenDay?.resetsAt != nil)
+        #expect(limits.windows.map(\.name) == ["5 h", "7 días"])
+        #expect(ClaudeStatusLine.parse(Data(#"{"rate_limits":null}"#.utf8), email: nil) == nil)
+        #expect(ClaudeStatusLine.parse(Data(#"{"model":{}}"#.utf8), email: nil) == nil)
+    }
+
+    @Test func figuresGoToTheAccountWhoseWeekTheyAre() {
+        let now = Date(timeIntervalSince1970: 1_795_000_000)
+        let weekA = now.addingTimeInterval(3 * 86400), weekB = now.addingTimeInterval(5 * 86400)
+        func reading(_ email: String, five: Double, week: Double, weekEnds: Date, ago: TimeInterval) -> ClaudeStatusLine.Limits {
+            .init(email: email, fiveHour: .init(percent: five, resetsAt: now.addingTimeInterval(3600)),
+                  sevenDay: .init(percent: week, resetsAt: weekEnds), at: now.addingTimeInterval(-ago))
+        }
+        // Switched from A to B: a session still open on A keeps drawing A's figures under B's email.
+        let stale = reading("b@x.io", five: 90, week: 98, weekEnds: weekA, ago: 5)
+        let fresh = reading("b@x.io", five: 10, week: 20, weekEnds: weekB, ago: 30)
+        let b = ClaudeStatusLine.attribute([stale, fresh], email: "b@x.io", known: weekB, others: [weekA], now: now)
+        #expect(b?.sevenDay?.percent == 20 && b?.fiveHour?.percent == 10)
+        let a = ClaudeStatusLine.attribute([stale, fresh], email: "a@x.io", known: weekA, others: [weekB], now: now)
+        #expect(a?.sevenDay?.percent == 98)
+        // No week known yet: the email decides, unless the week is another account's.
+        #expect(ClaudeStatusLine.attribute([stale, fresh], email: "b@x.io", known: nil, others: [weekA], now: now)?.sevenDay?.percent == 20)
+        // Two sessions of the same account: the higher figure of the same window, not whichever drew last.
+        let behind = reading("b@x.io", five: 4, week: 18, weekEnds: weekB, ago: 1)
+        #expect(ClaudeStatusLine.attribute([fresh, behind], email: "b@x.io", known: weekB, others: [], now: now)?.fiveHour?.percent == 10)
+        // Old readings stand for nothing.
+        #expect(ClaudeStatusLine.attribute([reading("b@x.io", five: 1, week: 1, weekEnds: weekB, ago: 900)], email: "b@x.io", known: weekB, others: [], now: now) == nil)
+        // The file keeps one reading per window pair, with the higher figure.
+        let kept = ClaudeStatusLine.merged(ClaudeStatusLine.merged([fresh], adding: behind), adding: stale)
+        #expect(kept.count == 2 && kept.first { ClaudeStatusLine.sameReset($0.sevenDay?.resetsAt, weekB) }?.sevenDay?.percent == 20)
+    }
+
+    @Test func tellsWhoseLoginATokenIs() {
+        let identity = ClaudeOAuth.Identity(uuid: "u1", email: "a@x.io", organizationUuid: nil)
+        #expect(AccountUsageService.judge(identity, uuid: "u1", email: "other@x.io") == .own)
+        #expect(AccountUsageService.judge(identity, uuid: "u2", email: "a@x.io") == .foreign(identity))
+        #expect(AccountUsageService.judge(identity, uuid: nil, email: "A@x.io") == .own)
+        #expect(AccountUsageService.judge(identity, uuid: nil, email: "b@x.io") == .foreign(identity))
+        #expect(ClaudeOAuth.parseProfile(Data(#"{"account":{"uuid":"u1","email":"a@x.io"},"organization":{"uuid":"o"}}"#.utf8)) == .init(uuid: "u1", email: "a@x.io", organizationUuid: "o"))
+        #expect(ClaudeOAuth.parseProfile(Data(#"{"account":{}}"#.utf8)) == nil)
+        // The login's own lapse, not the access token's.
+        let credential = #"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1795000000000,"refreshTokenExpiresAt":1797490025978}}"#
+        #expect(ClaudeCredential.loginExpiresAt(credential) == Date(timeIntervalSince1970: 1_797_490_025.978))
+        #expect(!ClaudeCredential.isLoginExpired(credential, now: Date(timeIntervalSince1970: 1_796_000_000)))
+        #expect(ClaudeCredential.isLoginExpired(credential, now: Date(timeIntervalSince1970: 1_798_000_000)))
+    }
+
+    @Test func putsTheRelayInFrontAndGivesTheOriginalBack() throws {
+        let box = try sandbox()
+        let settings = box.home + "/.claude/settings.json"
+        let original = #"{"theme": "dark", "statusLine": {"type": "command", "command": "printf hola", "padding": 1}}"#
+        try original.write(toFile: settings, atomically: true, encoding: .utf8)
+        let command = ClaudeStatusLine.command(binary: "/Apps/DevDeck")
+        try ClaudeStatusLine.apply(command: command, directory: box.data, home: box.home)
+        #expect(ClaudeStatusLine.installedCommand(home: box.home) == command)
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: settings))) as? [String: Any])
+        #expect((root["statusLine"] as? [String: Any])?["padding"] as? Int == 1)
+        #expect(root["theme"] as? String == "dark")
+        // Applied twice (the app moved): the original is still the person's, not the relay.
+        try ClaudeStatusLine.apply(command: ClaudeStatusLine.command(binary: "/Other/DevDeck"), directory: box.data, home: box.home)
+        #expect(ClaudeStatusLine.originalCommand(directory: box.data) == "printf hola")
+
+        // The relay keeps the limits and prints what the original printed.
+        try #"{"oauthAccount": {"emailAddress": "me@x.io"}, "big": [1, 2, 3]}"#.write(toFile: box.home + "/.claude.json", atomically: true, encoding: .utf8)
+        let output = ClaudeStatusLine.relay(input: Data(#"{"rate_limits":{"five_hour":{"used_percentage":12,"resets_at":1795000000}}}"#.utf8),
+                                            directory: box.data, home: box.home)
+        #expect(String(decoding: output, as: UTF8.self) == "hola")
+        let kept = try #require(ClaudeStatusLine.read(directory: box.data))
+        #expect(kept.email == "me@x.io" && kept.fiveHour?.percent == 12)
+
+        try ClaudeStatusLine.apply(command: nil, directory: box.data, home: box.home)
+        let back = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: settings))) as? [String: Any])
+        #expect((back["statusLine"] as? [String: Any])?["command"] as? String == "printf hola")
+    }
+
+    @Test func withoutAStatusLineBeforeTurningItOffLeavesNone() throws {
+        let box = try sandbox()
+        let settings = box.home + "/.claude/settings.json"
+        try #"{"theme": "dark"}"#.write(toFile: settings, atomically: true, encoding: .utf8)
+        try ClaudeStatusLine.apply(command: ClaudeStatusLine.command(binary: "/Apps/DevDeck"), directory: box.data, home: box.home)
+        #expect(ClaudeStatusLine.relay(input: Data("{}".utf8), directory: box.data, home: box.home).isEmpty)
+        try ClaudeStatusLine.apply(command: nil, directory: box.data, home: box.home)
+        let back = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: settings))) as? [String: Any])
+        #expect(back["statusLine"] == nil && back["theme"] as? String == "dark")
+    }
+}

@@ -803,19 +803,36 @@ struct CustomRecipeTests {
 
     @Test func activeAccountIsReadSoonerWhileTheAgentWorks() {
         let now = Date()
-        func due(_ ago: TimeInterval, active: Bool, busy: Bool, backoff: TimeInterval? = nil, entry: AccountUsage? = nil) -> Bool {
-            AccountUsageService.isDue(last: now.addingTimeInterval(-ago), entry: entry, active: active, busy: busy, backoff: backoff,
-                                      interval: 300, activeInterval: 90, now: now)
+        func due(_ ago: TimeInterval, active: Bool, busy: Bool, urgent: Bool = false, backoff: TimeInterval? = nil,
+                 limited: Bool = false, force: Bool = false, entry: AccountUsage? = nil) -> Bool {
+            AccountUsageService.isDue(last: now.addingTimeInterval(-ago), entry: entry, active: active, busy: busy, urgent: urgent,
+                                      backoff: backoff, recentlyLimited: limited, force: force, interval: 300, activeInterval: 180, now: now)
         }
-        #expect(due(100, active: true, busy: true))
-        #expect(!due(100, active: true, busy: false))
-        #expect(!due(100, active: false, busy: true))
+        #expect(due(181, active: true, busy: true))
+        #expect(!due(100, active: true, busy: true))
+        #expect(due(91, active: true, busy: true, urgent: true))
+        #expect(!due(200, active: true, busy: false))
+        #expect(!due(200, active: false, busy: true))
         #expect(due(301, active: false, busy: false))
         #expect(!due(400, active: true, busy: true, backoff: 600))
+        #expect(!due(400, active: true, busy: true, backoff: 600, force: true))
+        #expect(!due(30, active: false, busy: false, force: true))
+        #expect(due(61, active: false, busy: false, force: true))
+        #expect(!due(200, active: true, busy: true, urgent: true, limited: true))
         var old = AccountUsage()
         old.windows = [.init(name: "5 h", percent: 80, resetsAt: now.addingTimeInterval(-10))]
         #expect(due(61, active: false, busy: false, entry: old))
-        #expect(AccountUsageService.isDue(last: nil, entry: nil, active: false, busy: false, backoff: nil, interval: 300, activeInterval: 90, now: now))
+        #expect(AccountUsageService.isDue(last: nil, entry: nil, active: false, busy: false, backoff: nil, interval: 300, activeInterval: 180, now: now))
+    }
+
+    @Test func usageStaysUnderTheHourlyBudget() async {
+        // Steadiest the account in use is read: once every three minutes, twenty an hour, under the ~28 allowed.
+        let service = AccountUsageService(directory: nil)
+        #expect(await 3600 / service.activeInterval <= 20)
+        #expect(await 3600 / service.interval <= 20)
+        #expect(AccountUsageService.backoffAfterLimit(previous: nil, retryAfter: nil, maximum: 3600) == 300)
+        #expect(AccountUsageService.backoffAfterLimit(previous: nil, retryAfter: 1200, maximum: 3600) == 1260)
+        #expect(AccountUsageService.backoffAfterLimit(previous: 2400, retryAfter: nil, maximum: 3600) == 3600)
     }
 
     @Test func unsavedLoginKeepsItsOwnReading() async throws {

@@ -24,6 +24,14 @@ public struct StoredAccount: Codable, Identifiable, Hashable, Sendable {
         self.profileJSON = profileJSON; self.legacySlot = legacySlot; self.legacyNumber = legacyNumber
     }
 
+    /// Claude Code's id of the account (`accountUuid` of its `oauthAccount` block), when it was saved.
+    public var accountUuid: String? {
+        guard let data = profileJSON?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let uuid = object["accountUuid"] as? String, !uuid.isEmpty else { return nil }
+        return uuid
+    }
+
     /// Same person in the same organization = same account.
     public func matches(email other: String, organization: String?) -> Bool {
         email.caseInsensitiveCompare(other) == .orderedSame && (organizationUuid ?? "") == (organization ?? "")
@@ -91,6 +99,32 @@ public enum ClaudeCredential {
     public static func isExpired(_ json: String?, now: Date = Date(), margin: TimeInterval = 300) -> Bool {
         guard let expires = expiresAt(json) else { return false }
         return now.addingTimeInterval(margin) >= expires
+    }
+
+    /// When the login itself lapses (`refreshTokenExpiresAt`): past it only a new /login brings the account back.
+    /// The access token's `expiresAt` is a different thing, renewed every few hours. nil for logins older than the field.
+    public static func loginExpiresAt(_ json: String?) -> Date? {
+        guard let value = (oauth(json)?["refreshTokenExpiresAt"] as? NSNumber)?.doubleValue, value > 0 else { return nil }
+        return Date(timeIntervalSince1970: value / 1000)
+    }
+
+    public static func isLoginExpired(_ json: String?, now: Date = Date()) -> Bool {
+        loginExpiresAt(json).map { $0 <= now } ?? false
+    }
+
+    /// The account the login was issued to, when Claude Code recorded it in the credential.
+    public static func accountUuid(_ json: String?) -> String? {
+        (oauth(json)?["accountUuid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Two copies of the same login lineage: the same refresh token, or the same login stamp to the millisecond.
+    /// A renewal changes the refresh token but keeps `refreshTokenExpiresAt`, so the stamp follows a login
+    /// across renewals: two different accounts never share it.
+    public static func sameLineage(_ a: String?, _ b: String?) -> Bool {
+        if sameGeneration(a, b) { return true }
+        guard let x = (oauth(a)?["refreshTokenExpiresAt"] as? NSNumber)?.int64Value,
+              let y = (oauth(b)?["refreshTokenExpiresAt"] as? NSNumber)?.int64Value else { return false }
+        return x > 0 && x == y
     }
 
     static func serialize(_ object: [String: Any]) -> String? {
@@ -309,6 +343,18 @@ public final class AccountVault: @unchecked Sendable {
         }
     }
 
+    /// The saved account a login provably belongs to, judged on this Mac without asking anyone: the account id
+    /// Claude Code wrote into the credential, else the one saved account that holds the same login lineage.
+    /// nil when it cannot be told (or more than one account claims it).
+    public func owner(of credentials: String?, in list: [StoredAccount]? = nil) -> StoredAccount? {
+        let claude = (list ?? accounts()).filter { $0.agent == Self.claude }
+        if let uuid = ClaudeCredential.accountUuid(credentials) {
+            return claude.first { $0.accountUuid == uuid }
+        }
+        let lineage = claude.filter { ClaudeCredential.sameLineage(self.credentials(for: $0), credentials) }
+        return lineage.count == 1 ? lineage[0] : nil
+    }
+
     // MARK: The login in use
 
     /// Claude Code's config file: the legacy `~/.claude/.config.json` when it is in use, else `~/.claude.json`.
@@ -489,6 +535,12 @@ public final class AccountVault: @unchecked Sendable {
                     outgoing = StoredAccount(agent: Self.claude, email: live.email, organizationUuid: live.organizationUuid,
                                              organizationName: live.organizationName, profileJSON: live.profileJSON)
                     list.append(outgoing)
+                }
+                // The config names one account, but a session that was still open after the last switch may have
+                // renewed the previous account's login and written it back: then the login in use is that other
+                // account's, and filing it under the config's name would leave this slot holding someone else's login.
+                if let owner = owner(of: liveCredentials, in: list), owner.id != outgoing.id {
+                    outgoing = owner
                 }
                 // The saved copy can be the newer one (a renewal that could not reach the login in use): never go back.
                 let saved = credentials(for: outgoing)

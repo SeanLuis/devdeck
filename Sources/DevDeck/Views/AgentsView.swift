@@ -452,8 +452,9 @@ struct AccountRow: View {
         if let organization = account.organization, !organization.isEmpty { parts.append(organization) }
         if let note = account.note { parts.append(L(note)) }
         if account.isStale(), let read = account.usageFetched { parts.append(L("leído %@", relative(read))) }
-        if let expires = account.loginExpires, expires.timeIntervalSinceNow < 3 * 86400 {
-            parts.append(L("la sesión caduca %@", relative(expires)))
+        // A week ahead, like claude-swap: time to log in again before the account stops working.
+        if let expires = account.loginExpires, expires.timeIntervalSinceNow < 7 * 86400, account.note != "sesión caducada: vuelve a iniciar sesión" {
+            parts.append(expires <= Date() ? L("sesión caducada: vuelve a iniciar sesión") : L("la sesión caduca %@", relative(expires)))
         }
         return parts.joined(separator: " · ")
     }

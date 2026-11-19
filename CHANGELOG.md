@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.11
+
+- The limits of the account in use come from Claude Code itself: it hands them to its status line each time it draws it, and DevDeck keeps them on the way and then draws your usual status line. No request to Anthropic, so the menu bar and the automatic switch follow the account in use at once. Settings → AI; can be turned off, and the status line goes back as it was
+- The account in use is read every three minutes while the agent works, and every minute and a half only while it climbs near the switch line. Reading it every minute and a half all the time ran into Anthropic's limit of about 30 readings an hour, and the menu bar and the automatic switch were left with an old figure
+- After a "too many requests" answer DevDeck waits what the server asks (at least five minutes) and reads more slowly for the next hour; "Update" never asks twice within a minute
+- The limits no longer get mixed between accounts. The status line does not say whose figures it shows: a session left open across a switch kept drawing the previous account's 5-hour and 7-day figures under the new account's name. Each reading now goes to the account whose week it is, and two sessions of one account no longer overwrite each other with an older figure
+- DevDeck checks with Anthropic whose login each saved token is (once per renewal), as claude-swap does. A saved account that holds another account's login is marked "holds another account's login", shows no figures and is never switched to; a switch also files the login in use under the account it really belongs to
+- The login expiry shown is the login's own (`refreshTokenExpiresAt`), not the access token's, and it appears a week ahead for DevDeck's own accounts too; a login past it is marked expired without spending a renewal
+- `--accounts-dump --verify` prints, for each saved account, its login expiry and whether its token is its own
+- "Update and restart" no longer spins forever: the window says what it is doing (downloading, checking the signature, installing, restarting), a stalled download fails with a message after a while, and the new version opens only once the old one has really quit (before, if quitting took more than a second, the old version stayed open and the update seemed to do nothing)
+- Sidebar: the update card has room above it, its text no longer wraps, and in a short window the sections scroll instead of pushing the title and the bottom panel out of sight
+
 ## 0.1.10
 
 - The menu bar panel shows the agent account in use with its 5-hour and 7-day windows, and a selector to change to another saved account

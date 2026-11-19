@@ -257,6 +257,10 @@ struct SettingsView: View {
                         L("Añade tres hooks a ~/.claude/settings.json para saber al instante cuándo una sesión pide permiso o termina. Solo anotan el aviso; no cambian lo que hace el agente. Se guarda una copia del archivo.")) {
                         Toggle("", isOn: Binding(get: { model.settings.claudeHooks }, set: { model.setClaudeHooks($0) })).labelsHidden().toggleStyle(.switch)
                     }
+                    row(L("Límites desde la barra de estado de Claude Code"),
+                        L("Claude Code le pasa a su barra de estado los límites reales de la cuenta en uso. DevDeck los toma de ahí y luego dibuja tu barra de estado de siempre, sin consultar a Anthropic, que solo permite unas 30 lecturas por hora. Se guarda una copia del archivo.")) {
+                        Toggle("", isOn: Binding(get: { model.settings.claudeStatusRelay }, set: { model.setClaudeStatusRelay($0) })).labelsHidden().toggleStyle(.switch)
+                    }
                 }
                 case .monitoring:
                 Panel(L("Monitoreo"), symbol: "waveform.path.ecg") {

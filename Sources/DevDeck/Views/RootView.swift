@@ -66,37 +66,47 @@ struct Sidebar: View {
             .padding(.top, 40)
             .padding(.bottom, 14)
 
-            ForEach(groups, id: \.0) { title, sections in
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .kerning(0.5)
-                    .foregroundStyle(Theme.tertiaryText)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
-                ForEach(sections) { section in
-                    SidebarRow(section: section, selected: (model.selectedSection ?? .overview) == section, badge: badge(for: section))
-                        .onTapGesture { model.selectedSection = section }
+            // The sections scroll when the window is short; the header and the bottom block always keep their room.
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(groups, id: \.0) { title, sections in
+                        Text(title.uppercased())
+                            .font(.system(size: 10, weight: .semibold))
+                            .kerning(0.5)
+                            .foregroundStyle(Theme.tertiaryText)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                            .padding(.bottom, 4)
+                        ForEach(sections) { section in
+                            SidebarRow(section: section, selected: (model.selectedSection ?? .overview) == section, badge: badge(for: section))
+                                .onTapGesture { model.selectedSection = section }
+                        }
+                    }
                 }
+                .padding(.bottom, 12)
             }
-            Spacer()
-            Button { PaletteController.shared.show() } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 12))
-                    Text(L("Buscar")).font(.system(size: 13))
-                    Spacer()
-                    Keycap(text: model.settings.hotKeyLabel)
+            .frame(maxHeight: .infinity)
+            VStack(spacing: 8) {
+                Button { PaletteController.shared.show() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 12))
+                        Text(L("Buscar")).font(.system(size: 13))
+                        Spacer()
+                        Keycap(text: model.settings.hotKeyLabel)
+                    }
+                    .foregroundStyle(Theme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .frame(height: 32)
+                    .glass(cornerRadius: 8)
                 }
-                .foregroundStyle(Theme.secondaryText)
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .glass(cornerRadius: 8)
+                .buttonStyle(.plain)
+                UpdateCard()
+                SidebarFooter()
             }
-            .buttonStyle(.plain)
             .padding(.horizontal, 10)
-            UpdateCard().padding(.horizontal, 10).padding(.bottom, 8)
-            SidebarFooter()
-                .padding(10)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+            .overlay(alignment: .top) { Rectangle().fill(Theme.ink(0.06)).frame(height: 1) }
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.sidebar)

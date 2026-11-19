@@ -78,21 +78,33 @@ public enum Updates {
         return nil
     }
 
+    public enum Stage: Sendable { case downloading, verifying, installing }
+
+    /// A download that stalls or never ends fails with a message instead of leaving the update spinning.
+    static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 300
+        return URLSession(configuration: config)
+    }()
+
     /// Downloads the release, checks that macOS accepts it as notarized and that it comes from the expected team,
     /// and puts it in place of `appPath`. The old app is only removed once the new one is verified.
-    public static func install(_ release: AppRelease, replacing appPath: String) async throws {
+    public static func install(_ release: AppRelease, replacing appPath: String, stage: @Sendable (Stage) async -> Void = { _ in }) async throws {
         guard let text = release.downloadURL, let url = URL(string: text), url.scheme == "https" else { throw InstallError.noDownload }
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("devdeck-update-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
 
         let zip = work.appendingPathComponent("DevDeck.zip")
+        await stage(.downloading)
         do {
-            let (downloaded, response) = try await URLSession.shared.download(from: url)
+            let (downloaded, response) = try await session.download(from: url)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw InstallError.download }
             try FileManager.default.moveItem(at: downloaded, to: zip)
         } catch let error as InstallError { throw error } catch { throw InstallError.download }
 
+        await stage(.verifying)
         guard await Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, work.path], timeout: 120).ok else { throw InstallError.unpack }
         let fresh = work.appendingPathComponent("DevDeck.app").path
         guard FileManager.default.fileExists(atPath: fresh) else { throw InstallError.unpack }
@@ -105,6 +117,7 @@ public enum Updates {
         if let current = await teamIdentifier(ofApp: appPath), current != newTeam { throw InstallError.untrusted("team \(newTeam ?? "?")") }
         guard newTeam != nil else { throw InstallError.untrusted("team") }
 
+        await stage(.installing)
         let backup = appPath + ".previous"
         try? FileManager.default.removeItem(atPath: backup)
         do {

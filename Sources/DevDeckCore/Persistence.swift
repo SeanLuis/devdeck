@@ -123,6 +123,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var notifyAgentWaiting = true
     /// Hooks in Claude Code's settings that tell DevDeck at once when a session stops or asks for a permission.
     public var claudeHooks = false
+    /// Read the limits of the account in use from Claude Code's status line instead of asking Anthropic.
+    public var claudeStatusRelay = true
     /// Let coding agents ask, through DevDeck's MCP server, to free a port or restart a server. Each request needs approval.
     public var agentRequests = true
     /// "Tell me when it resets": account window ("<account id>|<window>") → when it resets (seconds since 1970).
@@ -174,6 +176,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         notifyAgentWaiting = try c.decodeIfPresent(Bool.self, forKey: .notifyAgentWaiting) ?? d.notifyAgentWaiting
         claudeHooks = try c.decodeIfPresent(Bool.self, forKey: .claudeHooks) ?? false
+        claudeStatusRelay = try c.decodeIfPresent(Bool.self, forKey: .claudeStatusRelay) ?? true
         agentRequests = try c.decodeIfPresent(Bool.self, forKey: .agentRequests) ?? true
         resetNotices = try c.decodeIfPresent([String: Double].self, forKey: .resetNotices) ?? [:]
         menuBar = try c.decodeIfPresent(MenuBarConfig.self, forKey: .menuBar) ?? MenuBarConfig()

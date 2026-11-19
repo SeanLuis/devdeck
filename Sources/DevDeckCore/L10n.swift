@@ -89,7 +89,7 @@ extension L10n {
         keys += ["Se vuelve a generar con el build", "Se regenera solo en el próximo dev/build"]
         keys += ["crítica", "alta", "normal", "5 h", "7 días", "créditos ilimitados", "templado", "caliente", "Propias",
                  "sesión caducada: vuelve a iniciar sesión", "sin conexión", "sin credenciales guardadas", "se actualizará cuando uses Claude Code",
-                 "límite de consultas; se reintenta luego"]
+                 "límite de consultas; se reintenta luego", "guarda el login de otra cuenta: vuelve a iniciar sesión en esta"]
         keys += ProcessRole.displayStrings
         // Tool names of the copilot and the sort options of the ports table.
         keys += ["Revisó los mayores consumidores", "Inspeccionó procesos", "Revisó los puertos", "Analizó el swap", "Revisó las cachés",

@@ -91,6 +91,8 @@ public enum AgentAccounts {
                                        plan: stored.id == active ? tier : nil, active: stored.id == active)
             account.vaultID = stored.id
             account.alias = stored.alias
+            // When the login itself has to be redone (not the access token, which renews every few hours).
+            account.loginExpires = ClaudeCredential.loginExpiresAt(stored.id == active ? vault.liveCredentials() : vault.credentials(for: stored))
             if let reading = usage[stored.id] {
                 account.windows = reading.usageWindows()
                 account.usageFetched = reading.fetchedAt

@@ -13,6 +13,12 @@ enum Entry {
             ClaudeHooks.record(FileHandle.standardInput.readDataToEndOfFile(), directory: JSONStore().directory)
             return
         }
+        // Claude Code's status line: keep its limits, then draw the line the person already had.
+        if args.count > 2, args[1] == "statusline", args[2] == "--devdeck" {
+            let output = ClaudeStatusLine.relay(input: FileHandle.standardInput.readDataToEndOfFile(), directory: JSONStore().directory)
+            FileHandle.standardOutput.write(output)
+            return
+        }
         if let index = args.firstIndex(of: "--record"), args.count > index + 1 {
             MainActor.assumeIsolated { SnapshotRunner.record(outDir: args[index + 1]) }
             return
@@ -57,7 +63,7 @@ enum Entry {
             return
         }
         if args.contains("--accounts-dump") {
-            CLI.accountsDump(readUsage: args.contains("--usage"))
+            CLI.accountsDump(readUsage: args.contains("--usage"), verify: args.contains("--verify"))
             return
         }
         if args.contains("--dump") {
@@ -392,8 +398,8 @@ enum CLI {
         done.wait()
     }
 
-    /// `--accounts-dump [--usage]`: what the account store sees. Read-only; prints no token, ever.
-    static func accountsDump(readUsage: Bool) {
+    /// `--accounts-dump [--usage] [--verify]`: what the account store sees. Read-only; prints no token, ever.
+    static func accountsDump(readUsage: Bool, verify: Bool = false) {
         let vault = AccountVault(directory: JSONStore().directory)
         func mask(_ email: String) -> String {
             let parts = email.split(separator: "@", maxSplits: 1)
@@ -406,7 +412,26 @@ enum CLI {
         print("almacén propio: \(vault.accounts().count) cuentas")
         for account in vault.accounts() {
             let saved = vault.credentials(for: account)
-            print("  \(mask(account.email)) [\(account.agent)] legible: \(ClaudeCredential.isLogin(saved)) · caduca: \(ClaudeCredential.expiresAt(saved).map { "\($0)" } ?? "—")")
+            print("  \(mask(account.email)) [\(account.agent)] legible: \(ClaudeCredential.isLogin(saved)) · token caduca: \(ClaudeCredential.expiresAt(saved).map { "\($0)" } ?? "—") · login caduca: \(ClaudeCredential.loginExpiresAt(saved).map { "\($0)" } ?? "—")")
+            if let owner = vault.owner(of: saved), owner.id != account.id { print("    ¡guarda el login de \(mask(owner.email))!") }
+        }
+        if verify {
+            // Asks Anthropic whose login each saved token is (one profile request per account). Prints no token.
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                let service = AccountUsageService(directory: nil)
+                for account in vault.accounts() where account.agent == AccountVault.claude {
+                    let stored = account.id == vault.activeAccount()?.id ? vault.liveCredentials() : vault.credentials(for: account)
+                    let verdict = await service.ownership(of: account.id, uuid: account.accountUuid, email: account.email, credentials: stored)
+                    switch verdict {
+                    case .own: print("  \(mask(account.email)): login propio")
+                    case .foreign(let identity): print("  \(mask(account.email)): ¡login de otra cuenta! (\(identity.email.map(mask) ?? identity.uuid.prefix(8) + "…"))")
+                    case .unknown: print("  \(mask(account.email)): sin verificar (token caducado o sin respuesta)")
+                    }
+                }
+                done.signal()
+            }
+            done.wait()
         }
         let preview = vault.legacyPreview()
         print("claude-swap: \(preview.count) cuentas")

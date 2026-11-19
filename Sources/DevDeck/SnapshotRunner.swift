@@ -69,6 +69,12 @@ enum SnapshotRunner {
             let sample = AppRelease(version: "0.2.0", notes: "## What's new\n\n- Token budgets per project, with alerts\n- Readers for **Cursor** and Aider\n- The island remembers the last board you used\n\n## Fixes\n\n- Lower CPU use while the window is open",
                                     pageURL: "https://github.com/\(Updates.repository)/releases", downloadURL: nil, publishedAt: Date().addingTimeInterval(-7200))
             await render(UpdateSheet(release: sample).environment(model).appLanguage(model.settings.language), size: CGSize(width: 560, height: 470), to: "\(outDir)/update.png")
+            // The sidebar pages show the update card too.
+            model.availableUpdate = sample
+            for height in [900.0, 640.0] {
+                await render(Sidebar().environment(model).appAppearance(model.settings.appearance).appLanguage(model.settings.language),
+                             size: CGSize(width: 220, height: height), to: "\(outDir)/sidebar-\(Int(height)).png")
+            }
             if let browser = model.snapshot.groups.first(where: { $0.kind == .browser }) ?? model.snapshot.groups.first(where: { $0.kind == .app }) {
                 await render(ProcessTable(group: browser).padding(16).frame(maxHeight: .infinity, alignment: .top).background(Theme.surface).environment(model)
                     .appAppearance(model.settings.appearance).appLanguage(model.settings.language), size: CGSize(width: 1000, height: 420), to: "\(outDir)/processes.png")

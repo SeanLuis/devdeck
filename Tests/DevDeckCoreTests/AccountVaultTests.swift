@@ -166,6 +166,32 @@ struct AccountVaultTests {
         #expect(box.vault.activeAccount()?.email == "one@example.com")
     }
 
+    @Test func aLoginWrittenBackBySessionLeftOpenGoesToItsOwnAccount() throws {
+        func login(_ name: String, refresh: String, uuid: String?, stamp: Int) -> String {
+            var oauth: [String: Any] = ["accessToken": "access-\(refresh)", "refreshToken": refresh, "refreshTokenExpiresAt": stamp,
+                                        "expiresAt": Int((Date().timeIntervalSince1970 + 3600) * 1000)]
+            if let uuid { oauth["accountUuid"] = uuid }
+            return String(decoding: try! JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth]), as: UTF8.self)
+        }
+        for withUuid in [true, false] {
+            let box = try VaultSandbox()
+            try box.logIn("one@example.com", org: "o", credentials: login("one", refresh: "r-one", uuid: withUuid ? "acc-one@example.com" : nil, stamp: 111))
+            let one = try box.vault.addCurrent()
+            try box.logIn("two@example.com", org: "o", credentials: login("two", refresh: "r-two", uuid: withUuid ? "acc-two@example.com" : nil, stamp: 222))
+            let two = try box.vault.addCurrent()
+            try box.logIn("three@example.com", org: "o", credentials: login("three", refresh: "r-three", uuid: nil, stamp: 333))
+            let three = try box.vault.addCurrent()
+            try box.vault.switchClaude(to: one.id)
+            // A session still open on "two" renews it and writes it over the login in use; the config still says "one".
+            let renewedTwo = login("two", refresh: "r-two-renewed", uuid: withUuid ? "acc-two@example.com" : nil, stamp: 222)
+            try box.keychain.set(service: AccountVault.claudeService, account: "tester", secret: renewedTwo)
+            #expect(box.vault.owner(of: renewedTwo)?.id == two.id)
+            try box.vault.switchClaude(to: three.id)
+            #expect(ClaudeCredential.refreshToken(box.vault.credentials(for: one)) == "r-one")
+            #expect(ClaudeCredential.refreshToken(box.vault.credentials(for: two)) == "r-two-renewed")
+        }
+    }
+
     @Test func aLoginThatWasNeverSavedIsKeptWhenSwitchingAway() throws {
         let box = try VaultSandbox()
         try box.logIn("two@example.com", org: "o2", credentials: VaultSandbox.login("two"))

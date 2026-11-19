@@ -52,19 +52,38 @@ extension AppModel {
         }
         updateInstalling = true
         updateError = nil
+        updateStage = nil
         let path = Bundle.main.bundlePath
         do {
-            try await Updates.install(release, replacing: path)
-            saveConversation()
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/bin/sh")
-            task.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", path]
-            try? task.run()
-            AppPresence.quit()
+            try await Updates.install(release, replacing: path) { stage in
+                await MainActor.run {
+                    switch stage {
+                    case .downloading: self.updateStage = L("Descargando…")
+                    case .verifying: self.updateStage = L("Comprobando la firma…")
+                    case .installing: self.updateStage = L("Instalando…")
+                    }
+                }
+            }
         } catch {
             updateInstalling = false
+            updateStage = nil
             updateError = error.localizedDescription
+            return
         }
+        updateStage = L("Reiniciando…")
+        saveConversation()
+        _ = resumePaused()
+        // The new copy opens once this one has really ended: a fixed "sleep 1" opened the old instance again
+        // when quitting took longer, and DevDeck was left running the old version.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "for i in $(seq 1 100); do kill -0 \"$1\" 2>/dev/null || break; sleep 0.2; done; kill -9 \"$1\" 2>/dev/null; sleep 0.3; /usr/bin/open \"$0\"",
+                          path, String(ProcessInfo.processInfo.processIdentifier)]
+        try? task.run()
+        showUpdate = false
+        // Quit once the sheet is gone; if something still holds the quit back, end the process anyway.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { AppPresence.quit() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { exit(0) }
     }
 }
 
@@ -75,16 +94,16 @@ struct UpdateCard: View {
     var body: some View {
         if let update = model.pendingUpdate {
             Button { model.showUpdate = true } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.circle.fill").foregroundStyle(Theme.link)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(L("Actualización disponible")).font(.system(size: 12, weight: .medium))
-                        Text(L("Versión %@ · ver novedades", update.version)).font(.system(size: 11)).foregroundStyle(Theme.secondaryText)
+                HStack(spacing: 9) {
+                    Image(systemName: "arrow.down.circle.fill").font(.system(size: 16)).foregroundStyle(Theme.link)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L("Actualización disponible")).font(.system(size: 12, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
+                        Text(L("Versión %@", update.version)).font(.system(size: 11)).foregroundStyle(Theme.secondaryText).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glass(cornerRadius: 10)
                 .contentShape(Rectangle())
@@ -132,7 +151,14 @@ struct UpdateSheet: View {
                 Button {
                     Task { await model.installUpdate(release) }
                 } label: {
-                    if model.updateInstalling { ProgressView().controlSize(.small) } else { Text(L("Actualizar y reiniciar")) }
+                    if model.updateInstalling {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(model.updateStage ?? L("Preparando…"))
+                        }
+                    } else {
+                        Text(L("Actualizar y reiniciar"))
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)

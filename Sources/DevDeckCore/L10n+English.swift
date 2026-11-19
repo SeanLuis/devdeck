@@ -1288,5 +1288,15 @@ extension L10n {
         "sin lectura": "no reading",
         "La sesión de %@ caducó: vuelve a iniciar sesión en esa cuenta": "The %@ session expired: sign in to that account again",
         "No se pudo renovar la sesión de %@; se reintenta en un momento": "Could not renew the %@ session; it will be retried in a moment",
+        "DevDeck lee los límites de la barra de estado de Claude Code.": "DevDeck reads the limits from Claude Code's status line.",
+        "Barra de estado de Claude Code devuelta a como estaba.": "Claude Code's status line is back as it was.",
+        "Límites desde la barra de estado de Claude Code": "Limits from Claude Code's status line",
+        "Claude Code le pasa a su barra de estado los límites reales de la cuenta en uso. DevDeck los toma de ahí y luego dibuja tu barra de estado de siempre, sin consultar a Anthropic, que solo permite unas 30 lecturas por hora. Se guarda una copia del archivo.": "Claude Code hands its status line the real limits of the account in use. DevDeck takes them from there and then draws your usual status line, without asking Anthropic, which allows only about 30 readings an hour. A copy of the file is kept.",
+        "guarda el login de otra cuenta: vuelve a iniciar sesión en esta": "holds another account's login: log in to this one again",
+        "%@ guarda el login de otra cuenta: inicia sesión de nuevo en %@ y guárdala otra vez": "%@ holds another account's login: log in to %@ again and save it once more",
+        "Descargando…": "Downloading…",
+        "Comprobando la firma…": "Checking the signature…",
+        "Instalando…": "Installing…",
+        "Reiniciando…": "Restarting…",
     ]
 }

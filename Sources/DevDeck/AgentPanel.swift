@@ -88,6 +88,27 @@ extension AppModel {
         try? ClaudeHooks.apply(command: hookCommand)
     }
 
+    // MARK: Claude Code status line relay
+
+    var statusRelayCommand: String { ClaudeStatusLine.command(binary: Bundle.main.executablePath ?? CommandLine.arguments[0]) }
+
+    func setClaudeStatusRelay(_ on: Bool) {
+        do {
+            try ClaudeStatusLine.apply(command: on ? statusRelayCommand : nil, directory: store.directory)
+            settings.claudeStatusRelay = on
+            saveSettings()
+            show(on ? L("DevDeck lee los límites de la barra de estado de Claude Code.") : L("Barra de estado de Claude Code devuelta a como estaba."))
+        } catch {
+            show(error.localizedDescription)
+        }
+    }
+
+    /// On at start (and after the app moves): the relay in place, pointing at this copy of DevDeck.
+    func repairClaudeStatusRelay() {
+        guard settings.claudeStatusRelay, !demo, ClaudeStatusLine.installedCommand() != statusRelayCommand else { return }
+        try? ClaudeStatusLine.apply(command: statusRelayCommand, directory: store.directory)
+    }
+
     func readHookEvents() async {
         let read = ClaudeHooks.read(directory: store.directory, from: hookOffset)
         hookOffset = read.offset
@@ -267,7 +288,8 @@ extension AppModel {
             let spent = agentUsage.tokens(agent: "Claude Code", since: Date().addingTimeInterval(-6 * 3600))
             let busy = spent != lastClaudeTokens
             lastClaudeTokens = spent
-            usage = await accountUsage.refresh(vault: vault, force: force, busy: busy)
+            usage = await accountUsage.refresh(vault: vault, force: force, busy: busy,
+                                               switchAt: settings.accountSwitchMode == "off" ? nil : settings.accountSwitchPercent)
         }
         accounts = await AgentAccounts.load(env: loginEnv, codexPlan: codexPlan, vault: vault, usage: usage)
         applySessionPace()
@@ -412,6 +434,13 @@ extension AppModel {
                     show(L("No se pudo renovar la sesión de %@; se reintenta en un momento", account.email))
                     return false
                 case .renewed, .inUse: break
+                }
+                // Never put in use a login that is another account's: Claude Code would run as that account
+                // under this one's name, and the limits of both would get mixed up.
+                if case .foreign = await accountUsage.verify(stored, vault: vault) {
+                    show(L("%@ guarda el login de otra cuenta: inicia sesión de nuevo en %@ y guárdala otra vez", account.email, account.email))
+                    await refreshAccounts()
+                    return false
                 }
             }
             let failure: String? = await Task.detached(priority: .userInitiated) {
